@@ -16,8 +16,22 @@
 
 typedef struct PTY
 {
-    int master, slave;
+    int   master, slave;
+    pid_t pid;
 } PTY;
+
+#define NO_PTY (PTY){-1,-1,-1}
+#define PTY_ISOK(PTY) (PTY.master > 0 && PTY.slave > 0)
+
+const size_t MAX_PTYS = 10;
+const size_t BUFF_SIZE = 1024;
+const size_t MAX_ARGS = 1024;
+
+typedef void (*CommandHandler) (char * const args[], PTY *ptys);
+typedef struct {
+    const char     *cmd;
+    CommandHandler handler;
+} CHLine;
 
 PTY newPty() {
     PTY ans;
@@ -41,8 +55,24 @@ PTY newPty() {
     return ans;
 }
 
-bool spawn(PTY *pty)
+bool spawn(char *const args[], PTY *ptys)
 {
+    int ptyi = -1;
+    for(size_t i = 0; i < MAX_PTYS; i++) {
+        if(!PTY_ISOK(ptys[i])) {
+            ptyi = i;
+            break;
+        }
+    }
+
+    if(ptyi == -1) {
+        fprintf(stderr, "Can't spawn more ptys :(\n");
+        exit(1);
+    }
+
+    PTY *pty = ptys + ptyi;
+    *pty = newPty();
+
     pid_t p = fork();
     if (p == 0)
     {
@@ -60,12 +90,14 @@ bool spawn(PTY *pty)
         dup2(pty->slave, 2);
         close(pty->slave);
 
-        execvp(SHELL, (char *[]){SHELL, NULL});
+        execvp(args[0], args);
         return true;
     }
     else if (p > 0)
     {
         close(pty->slave);
+        pty->pid = p;
+        fprintf(stderr, "spawned new pty #%d\n", ptyi);
         return true;
     }
 
@@ -73,15 +105,8 @@ bool spawn(PTY *pty)
     return false;
 }
 
-int newShell() {
-    PTY pty = newPty();
-    if(spawn(&pty)) {
-        return pty.master;
-    } else 
-        return -1;
-}
-
-bool reprint (int fd) {
+bool reprint (PTY *pty) {
+    int fd = pty->master;
     fd_set rds;
     int n;
     char buff[1024];
@@ -100,25 +125,81 @@ bool reprint (int fd) {
         if((n = read(fd, buff, 1024)) > 0) {
             printf("%.*s", n, buff);
             any = true;
+        } else {
+            /* This case happens when program behind finishes.
+               So I need to clean up. */
+            close(fd);
+            *pty = NO_PTY;
+            break;
         }
     }
 
     return any;
 }
 
-int main() {
-    int shell = newShell();
-    reprint(shell);
+void ch_cat(char * const args[], PTY *ptys) {
+    if(args[1] == NULL) {
+        fprintf(stderr, "cat: needed PTY number\n");
+        return;
+    }
 
-    char buff[1024];
-    while(fgets(buff, 1024, stdin)) {
-        if(buff[0] == '!')
-            printf("%s\n", buff);
-        else {
-            write(shell, buff, strlen(buff));
-            reprint(shell);
+    int ptyi;
+    if(sscanf(args[1], "%d", &ptyi) != 1 || !PTY_ISOK(ptys[ptyi])) {
+        fprintf(stderr, "cat: wrong PTY id: %s\n", args[1]);
+        return;
+    }
+
+    reprint(ptys + ptyi);
+}
+
+CHLine handlers[] = {
+    {".cat", &ch_cat}
+};
+
+void prompt() {
+    PTY ptys[MAX_PTYS];
+    for(size_t i = 0; i < MAX_PTYS; i++)
+        ptys[i] = NO_PTY;
+
+    char buff[BUFF_SIZE+1];
+    buff[BUFF_SIZE] = 0;
+    char *args[MAX_ARGS];
+
+    while(printf("> "), fgets(buff, BUFF_SIZE, stdin)) {
+        char *icur = buff;
+        char **ocur = args;
+        while(isspace(*icur)) icur++;
+        while(*icur != 0) {
+            *ocur = icur;
+            while(*icur > 0 && !isspace(*icur)) icur++;
+            if(*icur > 0) {
+                *icur = 0;
+                icur++;
+                while(isspace(*icur)) icur++;
+            }
+            ocur++;
+        }
+
+        *ocur = NULL;
+
+        CommandHandler ch = NULL;
+        for(size_t i = 0; i < sizeof(handlers) / sizeof(CHLine); i++) {
+            if(strcmp(args[0], handlers[i].cmd) == 0) {
+                ch = handlers[i].handler;
+                break;
+            }
+        }
+
+        if(ch != NULL) {
+            ch(args, ptys);
+        } else {
+            spawn(args, ptys);
         }
     }
+}
+
+int main() {
+    prompt();
 
     return 0;
 }
