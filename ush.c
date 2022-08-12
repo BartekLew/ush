@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <termios.h>
+#include <signal.h>
 #include <unistd.h>
 
 #define SHELL "/bin/bash"
@@ -199,6 +200,7 @@ void prompt() {
 }
 
 int main() {
+    sigignore(SIGTSTP);
     prompt();
 
     return 0;
