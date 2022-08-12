@@ -182,6 +182,7 @@ void prompt() {
         }
 
         *ocur = NULL;
+        if(*args == NULL) continue;
 
         CommandHandler ch = NULL;
         for(size_t i = 0; i < sizeof(handlers) / sizeof(CHLine); i++) {
