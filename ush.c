@@ -6,14 +6,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <linux/fs.h>
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <termios.h>
 #include <signal.h>
 #include <unistd.h>
-
-#define SHELL "/bin/bash"
+#include <threads.h>
 
 typedef struct PTY
 {
@@ -34,6 +35,8 @@ typedef struct {
     CommandHandler handler;
 } CHLine;
 
+typedef unsigned int uint;
+
 PTY newPty() {
     PTY ans;
     ans.master = posix_openpt(O_RDWR | O_NOCTTY);
@@ -47,7 +50,7 @@ PTY newPty() {
         perror("ptsname");
         exit(1);
     }
-    ans.slave = open(ptsn, O_RDWR | O_NOCTTY);
+    ans.slave = open(ptsn, O_RDWR);
     if(ans.slave == -1) {
         perror("open(pts_slave)");
         exit(1);
@@ -138,23 +141,109 @@ bool reprint (PTY *pty) {
     return any;
 }
 
-void ch_cat(char * const args[], PTY *ptys) {
+PTY *args_to_pty (char *const args[], PTY *ptys) {
     if(args[1] == NULL) {
         fprintf(stderr, "cat: needed PTY number\n");
-        return;
+        return NULL;
     }
 
     int ptyi;
     if(sscanf(args[1], "%d", &ptyi) != 1 || !PTY_ISOK(ptys[ptyi])) {
         fprintf(stderr, "cat: wrong PTY id: %s\n", args[1]);
-        return;
+        return NULL;
     }
 
-    reprint(ptys + ptyi);
+    return ptys + ptyi;
+}
+
+void ch_cat(char * const args[], PTY *ptys) {
+    PTY *pty = args_to_pty(args, ptys);
+    if(pty != NULL)
+        reprint(pty);
+}
+
+typedef int (*TsbFun)(struct termios termopt, void *ctx);
+int term_sandbox(TsbFun action, void *ctx) {
+    struct termios ito, oto, eto;
+    tcgetattr(STDIN_FILENO, &ito);
+    tcgetattr(STDOUT_FILENO, &oto);
+    tcgetattr(STDERR_FILENO, &eto);
+
+    struct termios termopt = ito;
+    int ans = action(termopt, ctx);
+
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &ito);
+    tcsetattr(STDOUT_FILENO, TCSAFLUSH, &oto);
+    tcsetattr(STDERR_FILENO, TCSAFLUSH, &eto);
+    
+    return ans;
+}
+
+int rewrite_fds(uint count, int *ifds, int *ofds, int waitmask) {
+    char buff[BUFF_SIZE+1];
+    buff[BUFF_SIZE] = 0;
+
+    fd_set rds;
+    struct timeval tv = { .tv_sec = 2, .tv_usec= 0 };
+    int maxfd = ifds[0];
+    for(uint i = 1; i < count; i++)
+        if(ifds[i] > maxfd)
+            maxfd = ifds[i];
+    maxfd++;
+
+    int deadmask = 0;
+    do {
+        FD_ZERO(&rds);
+        for(uint i = 0; i < count; i++) {
+            FD_SET(ifds[i], &rds);
+        }
+
+        if(select(maxfd, &rds, NULL, NULL, &tv) < 0) {
+            perror("select");
+            return -1;
+        }
+
+        deadmask = 0;
+        for(uint i = 0; i < count; i++) {
+            if(FD_ISSET(ifds[i], &rds)) {
+                int n = read(ifds[i], buff, BUFF_SIZE);
+                if(n > 0) {
+                    write(ofds[i], buff, n);
+                } else {
+                    deadmask |= 1 << i;
+                }
+            }
+        }
+    } while((deadmask & waitmask) == 0);
+
+    return deadmask;
+}
+
+int pty_foreground(struct termios termopt, PTY *pty) {
+    termopt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &termopt);
+
+    rewrite_fds(2, (int[]) { STDIN_FILENO, pty->master },
+                   (int[]) { pty->master, STDOUT_FILENO },
+                   0x02);
+
+    int status;
+    waitpid(pty->pid, &status, 0);
+    return status;
+}
+
+void ch_fg(char *const args[], PTY *ptys) {
+    PTY *pty = args_to_pty(args, ptys);
+    if(pty != NULL) {
+        int status = term_sandbox((TsbFun)&pty_foreground, pty);
+        printf("pid #%d finished with status %d\n", (int)pty->pid, status);
+        *pty = NO_PTY;
+    }
 }
 
 CHLine handlers[] = {
-    {".cat", &ch_cat}
+    {".cat", &ch_cat},
+    {".fg", &ch_fg}
 };
 
 void prompt() {

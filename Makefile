@@ -1,5 +1,5 @@
-CFLAGS += -g -std=c99 -Wall -Wextra -pedantic
-
+CFLAGS += -g -std=c11 -Wall -Wextra -pedantic -pthread 
+ 
 .PHONY: all clean
 
 all: ush
