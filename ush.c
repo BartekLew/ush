@@ -16,6 +16,10 @@
 #include <unistd.h>
 #include <threads.h>
 
+#define UNUSED(x) (void)x
+
+#define CTRL_D 0x04
+
 typedef struct PTY
 {
     int   master, slave;
@@ -241,9 +245,31 @@ void ch_fg(char *const args[], PTY *ptys) {
     }
 }
 
+int pty_readkey(struct termios termopt, void* ctx) {
+    UNUSED(ctx);
+    termopt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &termopt);
+    
+    int c;
+    while(read(STDIN_FILENO, &c, 4) > 0 && c != CTRL_D) {
+        printf("0x%.8x\r", c);
+        fflush(stdout);
+        c = 0;
+    }
+
+    return 0;
+}
+
+void ch_readkey(char *const args[], PTY *ptys) {
+    UNUSED(args);
+    UNUSED(ptys);
+    term_sandbox((TsbFun)&pty_readkey, NULL);
+}
+
 CHLine handlers[] = {
     {".cat", &ch_cat},
-    {".fg", &ch_fg}
+    {".fg", &ch_fg},
+    {".readkey", &ch_readkey}
 };
 
 void prompt() {
