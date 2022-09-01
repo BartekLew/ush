@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <sys/ioctl.h>
 #include <linux/fs.h>
 #include <sys/select.h>
@@ -19,14 +20,17 @@
 #define UNUSED(x) (void)x
 
 #define CTRL_D 0x04
+#define CTRL_X 0x18
+#define ERRNO_SIGCAUGHT 0x04
 
 typedef struct PTY
 {
     int   master, slave;
     pid_t pid;
+    bool  suspended;
 } PTY;
 
-#define NO_PTY (PTY){-1,-1,-1}
+#define NO_PTY (PTY){-1,-1,-1, 0}
 #define PTY_ISOK(PTY) (PTY.master > 0 && PTY.slave > 0)
 
 const size_t MAX_PTYS = 10;
@@ -41,8 +45,11 @@ typedef struct {
 
 typedef unsigned int uint;
 
+volatile bool has_sigstop = false;
+
 PTY newPty() {
-    PTY ans;
+    PTY ans = {.suspended = false};
+
     ans.master = posix_openpt(O_RDWR | O_NOCTTY);
     if(ans.master == -1 || grantpt(ans.master) == -1 || unlockpt(ans.master) == -1) {
         perror("openpt");
@@ -120,7 +127,6 @@ bool reprint (PTY *pty) {
     char buff[1024];
     struct timeval tv = { .tv_sec = 2, .tv_usec= 0 };
     bool any = false;
-
     while(1) {
         FD_ZERO(&rds);
         FD_SET(fd, &rds);
@@ -183,7 +189,9 @@ int term_sandbox(TsbFun action, void *ctx) {
     return ans;
 }
 
-int rewrite_fds(uint count, int *ifds, int *ofds, int waitmask) {
+typedef bool (*RewriteFilter)(const char *buff, int size);
+
+int rewrite_fds(uint count, int *ifds, int *ofds, int waitmask, RewriteFilter filter) {
     char buff[BUFF_SIZE+1];
     buff[BUFF_SIZE] = 0;
 
@@ -203,6 +211,12 @@ int rewrite_fds(uint count, int *ifds, int *ofds, int waitmask) {
         }
 
         if(select(maxfd, &rds, NULL, NULL, &tv) < 0) {
+            if(errno == ERRNO_SIGCAUGHT) {
+                if(filter(buff, 0))
+                    return 0;
+                continue;
+            }
+
             perror("select");
             return -1;
         }
@@ -211,6 +225,9 @@ int rewrite_fds(uint count, int *ifds, int *ofds, int waitmask) {
         for(uint i = 0; i < count; i++) {
             if(FD_ISSET(ifds[i], &rds)) {
                 int n = read(ifds[i], buff, BUFF_SIZE);
+                if(filter != NULL && filter(buff, n))
+                    return 0;
+
                 if(n > 0) {
                     write(ofds[i], buff, n);
                 } else {
@@ -223,25 +240,50 @@ int rewrite_fds(uint count, int *ifds, int *ofds, int waitmask) {
     return deadmask;
 }
 
+bool fg_filter(const char *buff, int size) {
+    UNUSED(buff);
+    UNUSED(size);
+    bool ans = has_sigstop;
+    has_sigstop = false;
+    return ans;
+}
+
+#define STOP_DEADMASK (int)0xffffffff
+
 int pty_foreground(struct termios termopt, PTY *pty) {
     termopt.c_lflag &= ~(ICANON | ECHO);
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &termopt);
 
-    rewrite_fds(2, (int[]) { STDIN_FILENO, pty->master },
-                   (int[]) { pty->master, STDOUT_FILENO },
-                   0x02);
+    if(pty->suspended) {
+        kill(pty->pid, SIGCONT);
+        pty->suspended = false;
+    }
+
+    int deadmask = rewrite_fds(2, (int[]) { STDIN_FILENO, pty->master },
+                                  (int[]) { pty->master, STDOUT_FILENO },
+                               0x02, &fg_filter);
 
     int status;
-    waitpid(pty->pid, &status, 0);
-    return status;
+    if(deadmask != 0) {
+        waitpid(pty->pid, &status, 0);
+        return status;
+    }
+
+    return STOP_DEADMASK;
 }
 
 void ch_fg(char *const args[], PTY *ptys) {
     PTY *pty = args_to_pty(args, ptys);
     if(pty != NULL) {
         int status = term_sandbox((TsbFun)&pty_foreground, pty);
-        printf("pid #%d finished with status %d\n", (int)pty->pid, status);
-        *pty = NO_PTY;
+        if(status != STOP_DEADMASK) {
+            printf("pid #%d finished with status %d\n", (int)pty->pid, status);
+            *pty = NO_PTY;
+        } else {
+            kill(pty->pid, SIGSTOP);
+            pty->suspended = true;
+            printf("pid %d suspended\n", (int)pty->pid);
+        }
     }
 }
 
@@ -315,8 +357,16 @@ void prompt() {
     }
 }
 
+void sigh_tstp(int signo) {
+    UNUSED(signo);
+    has_sigstop = true;
+}
+
 int main() {
-    sigignore(SIGTSTP);
+    struct sigaction act = { .sa_handler = &sigh_tstp };
+    sigemptyset(&act.sa_mask);
+    sigaction(SIGTSTP, &act, NULL);
+
     prompt();
 
     return 0;
