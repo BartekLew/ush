@@ -16,7 +16,7 @@ void ch_cat(char * const args[], PTY *ptys) {
 void ch_fg(char *const args[], PTY *ptys) {
     PTY *pty = args_to_pty(args, ptys);
     if(pty != NULL) {
-        int status = term_sandbox((TsbFun)&pty_foreground, pty);
+        int status = pty_foreground(pty);
         if(status != STOP_DEADMASK) {
             printf("pid #%d finished with status %d\n", (int)pty->pid, status);
             *pty = NO_PTY;
@@ -31,7 +31,7 @@ void ch_fg(char *const args[], PTY *ptys) {
 void ch_readkey(char *const args[], PTY *ptys) {
     UNUSED(args);
     UNUSED(ptys);
-    term_sandbox((TsbFun)&pty_readkey, NULL);
+    pty_readkey();
 }
 
 CHLine handlers[] = {

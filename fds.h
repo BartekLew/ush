@@ -26,9 +26,6 @@ PTY newPty();
 bool spawn(char *const args[], PTY *ptys);
 bool reprint (PTY *pty);
 
-typedef int (*TsbFun)(struct termios termopt, void *ctx);
-int term_sandbox(TsbFun action, void *ctx);
-
 typedef bool (*RewriteFilter)(const char *buff, int size);
 int rewrite_fds(uint count, int *ifds, int *ofds, int waitmask, RewriteFilter filter);
 

@@ -25,10 +25,7 @@ bool fg_filter(const char *buff, int size) {
     return ans;
 }
 
-int pty_foreground(struct termios termopt, PTY *pty) {
-    termopt.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &termopt);
-
+int pty_foreground(PTY *pty) {
     if(pty->suspended) {
         kill(pty->pid, SIGCONT);
         pty->suspended = false;
@@ -47,11 +44,7 @@ int pty_foreground(struct termios termopt, PTY *pty) {
     return STOP_DEADMASK;
 }
 
-int pty_readkey(struct termios termopt, void* ctx) {
-    UNUSED(ctx);
-    termopt.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &termopt);
-    
+int pty_readkey() {
     int c;
     while(read(STDIN_FILENO, &c, 4) > 0 && c != CTRL_D) {
         printf("0x%.8x\r", c);
@@ -62,17 +55,54 @@ int pty_readkey(struct termios termopt, void* ctx) {
     return 0;
 }
 
+char buff[BUFF_SIZE+1];
+int buff_pos = 0;
+int line_start = 0;
+
+char *readl(int fd) {
+    int n;
+    int old_line = line_start;
+    while((n = read(fd, buff+buff_pos, BUFF_SIZE-buff_pos)) > 0) {
+        write(STDOUT_FILENO, buff+buff_pos, n);
+
+        int end = -1;
+        for(int i = 0; i < n; i++) {
+            if(buff[buff_pos+i] == '\n') {
+                end = i;
+                break;
+            }
+        }
+
+        buff_pos += n;
+        if(end >= 0) {
+            if(end == n-1) {
+                line_start = buff_pos = 0;
+            }
+            break;
+        }
+    }
+
+    return buff + old_line;
+}
+
+struct termios ito, oto, eto;
 void prompt(const CHLine *handlers, size_t handlers_cnt) {
     PTY ptys[MAX_PTYS];
     for(size_t i = 0; i < MAX_PTYS; i++)
         ptys[i] = NO_PTY;
 
-    char buff[BUFF_SIZE+1];
-    buff[BUFF_SIZE] = 0;
     char *args[MAX_ARGS];
+    char *icur;
 
-    while(printf("> "), fgets(buff, BUFF_SIZE, stdin)) {
-        char *icur = buff;
+    tcgetattr(STDIN_FILENO, &ito);
+    tcgetattr(STDOUT_FILENO, &oto);
+    tcgetattr(STDERR_FILENO, &eto);
+
+    struct termios termopt = ito;
+    termopt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &termopt);
+
+    while(write(STDOUT_FILENO, "> ", 2), icur = readl(STDIN_FILENO)) {
         char **ocur = args;
         while(isspace(*icur)) icur++;
         while(*icur != 0) {
@@ -103,4 +133,12 @@ void prompt(const CHLine *handlers, size_t handlers_cnt) {
             spawn(args, ptys);
         }
     }
+
+    reset_tty();
+}
+
+void reset_tty() {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &ito);
+    tcsetattr(STDOUT_FILENO, TCSAFLUSH, &oto);
+    tcsetattr(STDERR_FILENO, TCSAFLUSH, &eto);
 }

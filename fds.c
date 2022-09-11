@@ -104,22 +104,6 @@ bool reprint (PTY *pty) {
     return any;
 }
 
-int term_sandbox(TsbFun action, void *ctx) {
-    struct termios ito, oto, eto;
-    tcgetattr(STDIN_FILENO, &ito);
-    tcgetattr(STDOUT_FILENO, &oto);
-    tcgetattr(STDERR_FILENO, &eto);
-
-    struct termios termopt = ito;
-    int ans = action(termopt, ctx);
-
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &ito);
-    tcsetattr(STDOUT_FILENO, TCSAFLUSH, &oto);
-    tcsetattr(STDERR_FILENO, TCSAFLUSH, &eto);
-    
-    return ans;
-}
-
 int rewrite_fds(uint count, int *ifds, int *ofds, int waitmask, RewriteFilter filter) {
     char buff[BUFF_SIZE+1];
     buff[BUFF_SIZE] = 0;

@@ -17,9 +17,10 @@ typedef struct {
 PTY *args_to_pty (char *const args[], PTY *ptys);
 
 #define STOP_DEADMASK (int)0xffffffff
-int pty_foreground(struct termios termopt, PTY *pty);
-int pty_readkey(struct termios termopt, void* ctx);
+int pty_foreground(PTY *pty);
+int pty_readkey();
 
 void prompt(const CHLine *handlers, size_t h_size);
+void reset_tty();
 
 #endif
