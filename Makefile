@@ -4,7 +4,7 @@ CFLAGS += -g -std=c11 -Wall -Wextra -pedantic -pthread
 
 all: ush
 
-ush: fds.o ush.o prompt.o
+ush: fds.o ush.o prompt.o cmdhint.o
 
 clean:
 	rm ush ush.o fds.o prompt.o

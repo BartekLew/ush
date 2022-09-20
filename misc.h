@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <errno.h>
 #include <signal.h>
@@ -14,6 +15,7 @@
 
 #define CTRL_D 0x04
 #define CTRL_X 0x18
+#define ESC 0x1b
 #define IN_BACKSPACE 0x7f
 #define ERRNO_SIGCAUGHT 0x04
 #define UP_ARROW 0x00415b1b
