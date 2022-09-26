@@ -32,21 +32,41 @@ const char *next_cmdhint(CmdHint *ch, const char *prefix) {
     size_t plen = strlen(prefix);
     Hash nhash = hashof(prefix, plen);
     if(ch->prefix_len != plen || nhash != ch->prefix_hash) {
+        if(ch->next_path != NULL)
+            ch->next_path[-1] = ':';
         ch->path = getenv("PATH");
+
+        #ifdef DEBUG
+        fprintf(stderr, "HOME>%s\n", ch->path);
+        #endif 
+        
         ch->current_hint = NULL;
         ch->next_path = NULL;
         ch->prefix_hash = nhash;
         ch->prefix_len = plen;
         ch->dh = NULL;
+        ch->builtins_cur = 0;
     } else if(ch->path == NULL) {
+        if(ch->next_path != NULL)
+            ch->next_path[-1] = ':';
         ch->path = getenv("PATH");
         ch->next_path = NULL;
+        ch->builtins_cur = 0;
     }
 
     while(1) {
         if(ch->path == NULL || ch->prefix_len == 0)
             break;
     
+        while(ch->builtins_cur < ch->builtins_count) {
+            const char *name = ch->builtins[ch->builtins_cur++].cmd;
+            Hash h = hashof(name, ch->prefix_len);
+            if(h == ch->prefix_hash) {
+                ch->current_hint = name;
+                return name;
+            }
+        }
+
         if(ch->dh == NULL) {
             uint i;
             for(i = 0; ch->path[i] != 0 && ch->path[i] != ':'; i++);
@@ -58,6 +78,10 @@ const char *next_cmdhint(CmdHint *ch, const char *prefix) {
             }
     
             ch->dh = opendir(ch->path);
+
+            #ifdef DEBUG
+            fprintf(stderr, "open %s\n", ch->path);
+            #endif
     
             if(ch->dh == NULL) break;
         }
@@ -74,6 +98,11 @@ const char *next_cmdhint(CmdHint *ch, const char *prefix) {
                 ch->next_path[-1] = ':';
         } else {
             Hash hash2 = hashof(de->d_name, plen);
+
+            #ifdef DEBUG
+            fprintf(stderr, "%lx %lx %s\n", hash2, ch->prefix_hash, de->d_name);
+            #endif
+
             // 0x2e = '.' - excluding . & ..
             if(hash2 != 0x2e && hash2 != 0x2e2e && hash2 == ch->prefix_hash)
                 return ch->current_hint = de->d_name;

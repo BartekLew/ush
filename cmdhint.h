@@ -21,7 +21,7 @@ typedef struct {
     char *path_cur;
     DIR *dh;
     const CHLine *builtins;
-    size_t builtins_count;
+    size_t builtins_count, builtins_cur;
 } CmdHint;
 
 CmdHint new_cmdhint(const CHLine *builtins, size_t builtins_count);

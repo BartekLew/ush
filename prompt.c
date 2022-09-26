@@ -105,6 +105,39 @@ int pk_esc(int fd, int line_start, InputInterface *ii) {
     return RRS_NOP;
 }
 
+int pkac_esc(int fd, int line_start, InputInterface *ii) {
+    UNUSED(line_start);
+    UNUSED(ii);
+    char cmd;
+    if(read(fd, &cmd, 1) == 1) { 
+        if(cmd == 0x5b) { // Move Keys
+            read(fd, &cmd, 1);
+            if(cmd == 'C' && buff_pos > line_start) {
+                const char *new_hint = next_cmdhint(ii->cmdhint, buff+line_start);
+                if(new_hint != NULL) {
+                    size_t pos = buff_pos - line_start;
+                    strncpy(buff + line_start, new_hint, pos);
+                    size_t hintlen = strlen(new_hint);
+
+                    char seq[10];
+
+                    // Move cursor back to beginning of command
+                    int n = sprintf(seq, "\x1b[%luD", ii->cmdhint->prefix_len);
+                    write(STDOUT_FILENO, seq, n);
+                    write(STDOUT_FILENO, new_hint, hintlen);
+                    write(STDOUT_FILENO, "\x1b[K", 3);
+                    if(hintlen > pos) {
+                        n = sprintf(seq, "\x1b[%luD", hintlen - pos);
+                        write(STDOUT_FILENO, seq, n);
+                    }
+                }
+            }
+        } 
+    }
+
+    return RRS_NOP;
+}
+
 int pk_bs(int fd, int line_start, InputInterface *ii) {
     UNUSED(fd);
     UNUSED(ii);
@@ -211,6 +244,7 @@ PromptKey keyset[] = {
 };
 
 PromptKey keyset_ac[] = {
+    {.key = ESC,          .handler = &pkac_esc},
     {.key = IN_BACKSPACE, .handler = &pkac_bs},
     {.key = ' ',          .handler = &pkac_space},
     {.key = '\t',         .handler = &pkac_space},
