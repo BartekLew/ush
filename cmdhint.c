@@ -124,12 +124,25 @@ ConstStr next_cmdhint(CmdHint *ch, const char *prefix) {
         while(str = next_cmd(ch), str.str != NULL)
             pushstr(&cmdhints, str);
 
+        if(cmdhints.strpos == 0)
+            return nostr;
+
         qsort(cmdhints.strbuff, cmdhints.strpos, sizeof(ConstStr), &ConstStr_cmp);
         uniq(&cmdhints);
+
+        return ch->current_hint = cmdhints.strbuff[ch->hintpos];
     }
 
-    if(ch->hintpos < cmdhints.strlen) {
-        return ch->current_hint = cmdhints.strbuff[ch->hintpos++];
+    if(ch->hintpos+1 < cmdhints.strlen) {
+        return ch->current_hint = cmdhints.strbuff[++ch->hintpos];
+    }
+
+    return nostr;
+}
+
+ConstStr prev_cmdhint(CmdHint *ch) {
+    if(ch->hintpos > 0) {
+        return ch->current_hint = cmdhints.strbuff[--ch->hintpos];
     }
 
     return nostr;

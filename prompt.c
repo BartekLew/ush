@@ -105,6 +105,25 @@ int pk_esc(int fd, int line_start, InputInterface *ii) {
     return RRS_NOP;
 }
 
+static void set_hint(ConstStr new_hint, int line_start, InputInterface *ii) {
+    if(new_hint.str != NULL) {
+        size_t pos = buff_pos - line_start;
+        strncpy(buff + line_start, new_hint.str, pos);
+
+        char seq[10];
+
+        // Move cursor back to beginning of command
+        int n = sprintf(seq, "\x1b[%luD", ii->cmdhint->prefix_len);
+        write(STDOUT_FILENO, seq, n);
+        write(STDOUT_FILENO, new_hint.str, new_hint.len);
+        write(STDOUT_FILENO, "\x1b[K", 3);
+        if(new_hint.len > pos) {
+            n = sprintf(seq, "\x1b[%luD", new_hint.len - pos);
+            write(STDOUT_FILENO, seq, n);
+        }
+    }
+}
+
 int pkac_esc(int fd, int line_start, InputInterface *ii) {
     UNUSED(line_start);
     UNUSED(ii);
@@ -114,22 +133,10 @@ int pkac_esc(int fd, int line_start, InputInterface *ii) {
             read(fd, &cmd, 1);
             if(cmd == 'C' && buff_pos > line_start) {
                 ConstStr new_hint = next_cmdhint(ii->cmdhint, buff+line_start);
-                if(new_hint.str != NULL) {
-                    size_t pos = buff_pos - line_start;
-                    strncpy(buff + line_start, new_hint.str, pos);
-
-                    char seq[10];
-
-                    // Move cursor back to beginning of command
-                    int n = sprintf(seq, "\x1b[%luD", ii->cmdhint->prefix_len);
-                    write(STDOUT_FILENO, seq, n);
-                    write(STDOUT_FILENO, new_hint.str, new_hint.len);
-                    write(STDOUT_FILENO, "\x1b[K", 3);
-                    if(new_hint.len > pos) {
-                        n = sprintf(seq, "\x1b[%luD", new_hint.len - pos);
-                        write(STDOUT_FILENO, seq, n);
-                    }
-                }
+                set_hint(new_hint, line_start, ii);
+            } else if(cmd == 'D' && buff_pos > line_start) {
+                ConstStr new_hint = prev_cmdhint(ii->cmdhint);
+                set_hint(new_hint, line_start, ii);
             }
         } 
     }

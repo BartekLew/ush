@@ -25,5 +25,6 @@ typedef struct {
 
 CmdHint new_cmdhint(const CHLine *builtins, size_t builtins_count);
 ConstStr next_cmdhint(CmdHint *ch, const char *prefix);
+ConstStr prev_cmdhint(CmdHint *ch);
 
 #endif

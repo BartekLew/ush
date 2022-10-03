@@ -1,4 +1,4 @@
-CFLAGS += -g -std=c11 -Wall -Wextra -pedantic -pthread 
+CFLAGS += -g -std=c11 -Wall -Wextra -fstack-protector -pthread
  
 .PHONY: all clean
 
