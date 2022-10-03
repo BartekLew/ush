@@ -28,7 +28,7 @@ CmdHint new_cmdhint(const CHLine *builtins, size_t builtins_count) {
                        .builtins = builtins, .builtins_count = builtins_count };
 }
 
-const char *next_cmdhint(CmdHint *ch, const char *prefix) {
+static void apply_prefix(CmdHint *ch, const char *prefix) {
     size_t plen = strlen(prefix);
     Hash nhash = hashof(prefix, plen);
     if(ch->prefix_len != plen || nhash != ch->prefix_hash) {
@@ -53,60 +53,86 @@ const char *next_cmdhint(CmdHint *ch, const char *prefix) {
         ch->next_path = NULL;
         ch->builtins_cur = 0;
     }
+}
+
+static const char *get_builtin_hint(CmdHint *ch) {
+    while(ch->builtins_cur < ch->builtins_count) {
+        const char *name = ch->builtins[ch->builtins_cur++].cmd;
+        Hash h = hashof(name, ch->prefix_len);
+        if(h == ch->prefix_hash) {
+            ch->current_hint = name;
+            return name;
+        }
+    }
+
+    return NULL;
+}
+
+static bool has_path(CmdHint *ch) {
+    if(ch->dh == NULL) {
+        uint i;
+        for(i = 0; ch->path[i] != 0 && ch->path[i] != ':'; i++);
+        if(ch->path[i] == ':') {
+            ch->next_path = ch->path + i + 1;
+            ch->path[i] = 0;
+        } else {
+            ch->next_path = NULL;
+        }
+
+        ch->dh = opendir(ch->path);
+
+        #ifdef DEBUG
+        fprintf(stderr, "open %s\n", ch->path);
+        #endif
+
+        return ch->dh != NULL;
+    }
+    return true;
+}
+
+static const char *try_next_file(CmdHint *ch) {
+    struct dirent *de = readdir(ch->dh);
+    if(de == NULL) {
+        closedir(ch->dh);
+        ch->dh = NULL;
+        ch->path = ch->next_path;
+        /* getenv() command is likely to point at the same
+            place remaining unchanged at all times, so I must
+            undo my putting '\0' instead of ':' : */
+        if(ch->next_path != NULL)
+            ch->next_path[-1] = ':';
+    } else {
+        Hash hash2 = hashof(de->d_name, ch->prefix_len);
+
+        #ifdef DEBUG
+        fprintf(stderr, "%lx %lx %s\n", hash2, ch->prefix_hash, de->d_name);
+        #endif
+
+        // 0x2e = '.' - excluding . & ..
+        if(hash2 != 0x2e && hash2 != 0x2e2e && hash2 == ch->prefix_hash)
+            return ch->current_hint = de->d_name;
+    }
+
+    return NULL;
+}
+
+const char *next_cmdhint(CmdHint *ch, const char *prefix) {
+    apply_prefix(ch, prefix);
 
     while(1) {
         if(ch->path == NULL || ch->prefix_len == 0)
             break;
     
-        while(ch->builtins_cur < ch->builtins_count) {
-            const char *name = ch->builtins[ch->builtins_cur++].cmd;
-            Hash h = hashof(name, ch->prefix_len);
-            if(h == ch->prefix_hash) {
-                ch->current_hint = name;
-                return name;
-            }
-        }
+        const char *ans = get_builtin_hint(ch);
+        if(ans != NULL)
+            return ans;
 
-        if(ch->dh == NULL) {
-            uint i;
-            for(i = 0; ch->path[i] != 0 && ch->path[i] != ':'; i++);
-            if(ch->path[i] == ':') {
-                ch->next_path = ch->path + i + 1;
-                ch->path[i] = 0;
-            } else {
-                ch->next_path = NULL;
-            }
-    
-            ch->dh = opendir(ch->path);
+        if(!has_path(ch))
+            break;
 
-            #ifdef DEBUG
-            fprintf(stderr, "open %s\n", ch->path);
-            #endif
-    
-            if(ch->dh == NULL) break;
-        }
-    
-        struct dirent *de = readdir(ch->dh);
-        if(de == NULL) {
-            closedir(ch->dh);
-            ch->dh = NULL;
-            ch->path = ch->next_path;
-            /* getenv() command is likely to point at the same
-               place remaining unchanged at all times, so I must
-               undo my putting '\0' instead of ':' : */
-            if(ch->next_path != NULL)
-                ch->next_path[-1] = ':';
-        } else {
-            Hash hash2 = hashof(de->d_name, plen);
-
-            #ifdef DEBUG
-            fprintf(stderr, "%lx %lx %s\n", hash2, ch->prefix_hash, de->d_name);
-            #endif
-
-            // 0x2e = '.' - excluding . & ..
-            if(hash2 != 0x2e && hash2 != 0x2e2e && hash2 == ch->prefix_hash)
-                return ch->current_hint = de->d_name;
-        }
+        ans = try_next_file(ch);
+        if(ans != NULL)
+            return ans;
     }
 
     return NULL;
