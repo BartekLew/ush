@@ -113,21 +113,20 @@ int pkac_esc(int fd, int line_start, InputInterface *ii) {
         if(cmd == 0x5b) { // Move Keys
             read(fd, &cmd, 1);
             if(cmd == 'C' && buff_pos > line_start) {
-                const char *new_hint = next_cmdhint(ii->cmdhint, buff+line_start);
-                if(new_hint != NULL) {
+                ConstStr new_hint = next_cmdhint(ii->cmdhint, buff+line_start);
+                if(new_hint.str != NULL) {
                     size_t pos = buff_pos - line_start;
-                    strncpy(buff + line_start, new_hint, pos);
-                    size_t hintlen = strlen(new_hint);
+                    strncpy(buff + line_start, new_hint.str, pos);
 
                     char seq[10];
 
                     // Move cursor back to beginning of command
                     int n = sprintf(seq, "\x1b[%luD", ii->cmdhint->prefix_len);
                     write(STDOUT_FILENO, seq, n);
-                    write(STDOUT_FILENO, new_hint, hintlen);
+                    write(STDOUT_FILENO, new_hint.str, new_hint.len);
                     write(STDOUT_FILENO, "\x1b[K", 3);
-                    if(hintlen > pos) {
-                        n = sprintf(seq, "\x1b[%luD", hintlen - pos);
+                    if(new_hint.len > pos) {
+                        n = sprintf(seq, "\x1b[%luD", new_hint.len - pos);
                         write(STDOUT_FILENO, seq, n);
                     }
                 }
@@ -163,7 +162,7 @@ int pkac_bs(int fd, int line_start, InputInterface *ii) {
 
         return RRS_NOP;
     } else {
-        ii->cmdhint->current_hint = NULL;
+        ii->cmdhint->current_hint = nostr;
         return RRS_BACKSPACE;
     }
 }
@@ -179,10 +178,9 @@ int pk_space(int fd, int line_start, InputInterface *ii) {
     return RRS_NOP;
 }
 
-size_t autocomplete_buff(const char *str, int line_start) {
-    size_t len = strlen(str);
-    size_t rem = len - (buff_pos - line_start);
-    strcpy(buff + line_start, str);
+size_t autocomplete_buff(ConstStr str, int line_start) {
+    size_t rem = str.len - (buff_pos - line_start);
+    strcpy(buff + line_start, str.str);
     buff_pos += rem;
 
     return rem;
@@ -190,7 +188,7 @@ size_t autocomplete_buff(const char *str, int line_start) {
 
 int pkac_space(int fd, int line_start, InputInterface *ii) {
     UNUSED(fd);
-    if(buff_pos > line_start && ii->cmdhint->current_hint != NULL) {
+    if(buff_pos > line_start && ii->cmdhint->current_hint.str != NULL) {
         size_t rem = autocomplete_buff(ii->cmdhint->current_hint, line_start);
 
         char seq[10];
@@ -224,7 +222,7 @@ int pk_ret(int fd, int line_start, InputInterface *ii) {
 int pkac_ret(int fd, int line_start, InputInterface *ii) {
     UNUSED(fd);
 
-    if(buff_pos > line_start && ii->cmdhint != NULL && ii->cmdhint->current_hint != NULL) {
+    if(buff_pos > line_start && ii->cmdhint != NULL && ii->cmdhint->current_hint.str != NULL) {
         autocomplete_buff(ii->cmdhint->current_hint, line_start);
         write(STDOUT_FILENO, "\n", 1);
         
@@ -256,13 +254,13 @@ int ii_command_input(char key, int fd, int line_start, InputInterface *ii) {
     buff[buff_pos++] = key;
     buff[buff_pos] = 0;
 
-    const char *hint = next_cmdhint(ii->cmdhint, buff + line_start);
-    if(hint == NULL) {
+    ConstStr hint = next_cmdhint(ii->cmdhint, buff + line_start);
+    if(hint.str == NULL) {
         buff_pos--;
     } else {
         int cut = buff_pos - line_start - 1;
-        int rem = strlen(hint) - cut;
-        write(STDOUT_FILENO, hint + cut, rem);
+        int rem = hint.len - cut;
+        write(STDOUT_FILENO, hint.str + cut, rem);
 
         char seq[10];
         // ^[[K - erase to the end of line

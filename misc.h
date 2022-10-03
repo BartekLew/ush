@@ -28,4 +28,11 @@ typedef unsigned int uint;
 #define BUFF_SIZE 1024
 #define MAX_ARGS 1024
 
+typedef struct {
+    const char *str;
+    size_t len;
+} ConstStr;
+
+#define nostr (ConstStr) {NULL,0}
+
 #endif

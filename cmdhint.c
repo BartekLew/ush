@@ -28,7 +28,7 @@ CmdHint new_cmdhint(const CHLine *builtins, size_t builtins_count) {
                        .builtins = builtins, .builtins_count = builtins_count };
 }
 
-static void apply_prefix(CmdHint *ch, const char *prefix) {
+static bool apply_prefix(CmdHint *ch, const char *prefix) {
     size_t plen = strlen(prefix);
     Hash nhash = hashof(prefix, plen);
     if(ch->prefix_len != plen || nhash != ch->prefix_hash) {
@@ -40,12 +40,14 @@ static void apply_prefix(CmdHint *ch, const char *prefix) {
         fprintf(stderr, "HOME>%s\n", ch->path);
         #endif 
         
-        ch->current_hint = NULL;
+        ch->current_hint = nostr;
         ch->next_path = NULL;
         ch->prefix_hash = nhash;
         ch->prefix_len = plen;
         ch->dh = NULL;
         ch->builtins_cur = 0;
+        
+        return true;
     } else if(ch->path == NULL) {
         if(ch->next_path != NULL)
             ch->next_path[-1] = ':';
@@ -53,19 +55,21 @@ static void apply_prefix(CmdHint *ch, const char *prefix) {
         ch->next_path = NULL;
         ch->builtins_cur = 0;
     }
+
+    return false;
 }
 
-static const char *get_builtin_hint(CmdHint *ch) {
+static ConstStr get_builtin_hint(CmdHint *ch) {
     while(ch->builtins_cur < ch->builtins_count) {
         const char *name = ch->builtins[ch->builtins_cur++].cmd;
         Hash h = hashof(name, ch->prefix_len);
         if(h == ch->prefix_hash) {
-            ch->current_hint = name;
-            return name;
+            size_t len = strlen(name);
+            return ch->current_hint = (ConstStr) { .str = name, .len = len };
         }
     }
 
-    return NULL;
+    return nostr;
 }
 
 static bool has_path(CmdHint *ch) {
@@ -90,7 +94,7 @@ static bool has_path(CmdHint *ch) {
     return true;
 }
 
-static const char *try_next_file(CmdHint *ch) {
+static ConstStr try_next_file(CmdHint *ch) {
     struct dirent *de = readdir(ch->dh);
     if(de == NULL) {
         closedir(ch->dh);
@@ -109,32 +113,35 @@ static const char *try_next_file(CmdHint *ch) {
         #endif
 
         // 0x2e = '.' - excluding . & ..
-        if(hash2 != 0x2e && hash2 != 0x2e2e && hash2 == ch->prefix_hash)
-            return ch->current_hint = de->d_name;
+        if(hash2 != 0x2e && hash2 != 0x2e2e && hash2 == ch->prefix_hash) {
+            const char *name = de->d_name;
+            size_t len = strlen(name);
+            return ch->current_hint = (ConstStr) { .str = name, .len = len };
+        }
     }
 
-    return NULL;
+    return nostr;
 }
 
-const char *next_cmdhint(CmdHint *ch, const char *prefix) {
+ConstStr next_cmdhint(CmdHint *ch, const char *prefix) {
     apply_prefix(ch, prefix);
 
     while(1) {
         if(ch->path == NULL || ch->prefix_len == 0)
             break;
     
-        const char *ans = get_builtin_hint(ch);
-        if(ans != NULL)
+        ConstStr ans = get_builtin_hint(ch);
+        if(ans.str != NULL)
             return ans;
 
         if(!has_path(ch))
             break;
 
         ans = try_next_file(ch);
-        if(ans != NULL)
+        if(ans.str != NULL)
             return ans;
     }
 
-    return NULL;
+    return nostr;
 }
 

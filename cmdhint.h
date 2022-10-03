@@ -15,7 +15,7 @@ typedef uint64_t Hash;
 
 typedef struct {
     char *path, *next_path;
-    const char *current_hint;
+    ConstStr current_hint;
     Hash prefix_hash;
     size_t prefix_len;
     char *path_cur;
@@ -25,6 +25,6 @@ typedef struct {
 } CmdHint;
 
 CmdHint new_cmdhint(const CHLine *builtins, size_t builtins_count);
-const char *next_cmdhint(CmdHint *ch, const char *prefix);
+ConstStr next_cmdhint(CmdHint *ch, const char *prefix);
 
 #endif
