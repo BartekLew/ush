@@ -27,6 +27,8 @@ typedef unsigned int uint;
 
 #define BUFF_SIZE 1024
 #define MAX_ARGS 1024
+#define MAX_CMDHINTS 4000
+#define CMD_NAMEBUFF_LEN 40000
 
 typedef struct {
     const char *str;
@@ -34,5 +36,30 @@ typedef struct {
 } ConstStr;
 
 #define nostr (ConstStr) {NULL,0}
+int ConstStr_cmp(const void* a, const void*b);
+
+typedef struct {
+    char     *charbuff;
+    ConstStr *strbuff;
+    size_t   charlen, strlen;
+    size_t    charpos, strpos;
+} StrList;
+
+#define STATIC_STRLIST(NAME, CHARLEN, STRLEN) \
+    static char NAME##_charbuff[CHARLEN+1];\
+    static ConstStr NAME##_strbuff[STRLEN]; \
+    static StrList NAME = (StrList) {\
+                .charbuff = NAME##_charbuff,\
+                .strbuff = NAME##_strbuff, \
+                .charlen = CHARLEN, .strlen = STRLEN,\
+                .charpos = 0, .strpos = 0\
+            }
+
+bool pushstr (StrList *tgt, ConstStr str); 
+void resetlist (StrList *tgt);
+void uniq(StrList *tgt);
+
+typedef uint64_t Hash;
+Hash hashof(const char *txt, size_t len);
 
 #endif

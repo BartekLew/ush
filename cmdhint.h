@@ -11,11 +11,10 @@
 #include <sys/types.h>
 #include <dirent.h>
 
-typedef uint64_t Hash;
-
 typedef struct {
     char *path, *next_path;
     ConstStr current_hint;
+    size_t hintpos;
     Hash prefix_hash;
     size_t prefix_len;
     char *path_cur;

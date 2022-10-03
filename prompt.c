@@ -261,12 +261,13 @@ int ii_command_input(char key, int fd, int line_start, InputInterface *ii) {
         int cut = buff_pos - line_start - 1;
         int rem = hint.len - cut;
         write(STDOUT_FILENO, hint.str + cut, rem);
+        write(STDOUT_FILENO, "\x1b[K", 3);
 
         char seq[10];
         // ^[[K - erase to the end of line
         // ^[[nD move n chars left
         if(rem > 1) {
-            int n = sprintf(seq, "\x1b[K\x1b[%dD", rem-1);
+            int n = sprintf(seq, "\x1b[%dD", rem-1);
             write(STDOUT_FILENO, seq, n);
         }
     }

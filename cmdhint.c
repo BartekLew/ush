@@ -1,28 +1,5 @@
 #include "cmdhint.h"
 
-Hash hashof(const char *txt, size_t len) {
-    Hash ans = 0;
-    int l = len > 8? 8: len;
-    for(int i = 0; i < l; i++)
-        ans |= txt[i] << (8*i);
-
-    l = len - 8;
-    txt += 8;
-    uint off2 = 1;
-    while(l > 0) {
-        int l2 = l > 7? 7: l;
-        for(int i = 0; i < l2; i++) {
-            ans ^= ~(txt[i]) << (8*i + off2);
-        }
-        
-        l -= 7;
-        off2 = (off2 + 1)%8;
-        txt += 7;
-    }
-
-    return ans;
-}
-
 CmdHint new_cmdhint(const CHLine *builtins, size_t builtins_count) {
     return (CmdHint) { .path = NULL, .dh = NULL, .prefix_hash = 0, .prefix_len = 0,
                        .builtins = builtins, .builtins_count = builtins_count };
@@ -46,15 +23,10 @@ static bool apply_prefix(CmdHint *ch, const char *prefix) {
         ch->prefix_len = plen;
         ch->dh = NULL;
         ch->builtins_cur = 0;
+        ch->hintpos = 0;
         
         return true;
-    } else if(ch->path == NULL) {
-        if(ch->next_path != NULL)
-            ch->next_path[-1] = ':';
-        ch->path = getenv("PATH");
-        ch->next_path = NULL;
-        ch->builtins_cur = 0;
-    }
+    } 
 
     return false;
 }
@@ -123,9 +95,7 @@ static ConstStr try_next_file(CmdHint *ch) {
     return nostr;
 }
 
-ConstStr next_cmdhint(CmdHint *ch, const char *prefix) {
-    apply_prefix(ch, prefix);
-
+ConstStr next_cmd(CmdHint *ch) {
     while(1) {
         if(ch->path == NULL || ch->prefix_len == 0)
             break;
@@ -140,6 +110,26 @@ ConstStr next_cmdhint(CmdHint *ch, const char *prefix) {
         ans = try_next_file(ch);
         if(ans.str != NULL)
             return ans;
+    }
+
+    return nostr;
+}
+
+STATIC_STRLIST(cmdhints, 40000, 4000);
+
+ConstStr next_cmdhint(CmdHint *ch, const char *prefix) {
+    if(apply_prefix(ch, prefix)) {
+        resetlist(&cmdhints);
+        ConstStr str;
+        while(str = next_cmd(ch), str.str != NULL)
+            pushstr(&cmdhints, str);
+
+        qsort(cmdhints.strbuff, cmdhints.strpos, sizeof(ConstStr), &ConstStr_cmp);
+        uniq(&cmdhints);
+    }
+
+    if(ch->hintpos < cmdhints.strlen) {
+        return ch->current_hint = cmdhints.strbuff[ch->hintpos++];
     }
 
     return nostr;
