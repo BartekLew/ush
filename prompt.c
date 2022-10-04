@@ -82,6 +82,7 @@ struct ii {
     PromptKey *keymap;
     size_t    keymap_len;
     int       (*else_handler) (char key, int fd, int line_start, InputInterface *ii);
+    ConstStr  promptString;
     CmdHint   *cmdhint;
 };
 
@@ -213,6 +214,35 @@ int pkac_space(int fd, int line_start, InputInterface *ii) {
     return RRS_NOP;
 }
 
+void termcur_hmove(int n) {
+    if(n != 0) {
+        char seq[10];
+        int l;
+        if(n>0)
+            l = sprintf(seq, "\x1b[%dC", n);
+        else
+            l = sprintf(seq, "\x1b[%dD", -n);
+        write(STDOUT_FILENO, seq, l);
+    }
+}
+
+int pkac_tab(int fd, int line_start, InputInterface *ii) {
+    UNUSED(fd);
+    if(buff_pos > line_start && ii->cmdhint->hints->strpos > 0) {
+        printf("\n");
+        StrList *hs = ii->cmdhint->hints;
+        for(size_t i = 0; i < hs->strpos; i++) {
+            printf("%s ", hs->strbuff[i].str);
+        }
+        printf("\n");
+
+        writestr(STDOUT_FILENO, ii->promptString);
+        writestr(STDOUT_FILENO, ii->cmdhint->current_hint);
+        termcur_hmove((buff_pos - line_start)-ii->cmdhint->current_hint.len);
+    }
+    return RRS_NOP;   
+}
+
 int pk_ret(int fd, int line_start, InputInterface *ii) {
     UNUSED(fd);
     UNUSED(line_start);
@@ -252,7 +282,7 @@ PromptKey keyset_ac[] = {
     {.key = ESC,          .handler = &pkac_esc},
     {.key = IN_BACKSPACE, .handler = &pkac_bs},
     {.key = ' ',          .handler = &pkac_space},
-    {.key = '\t',         .handler = &pkac_space},
+    {.key = '\t',         .handler = &pkac_tab},
     {.key = '\n',         .handler = &pkac_ret}
 };
 
@@ -349,18 +379,12 @@ ReadResult read_word(int fd, char *override_arg, InputInterface *ii) {
 }
 
 char *args[MAX_ARGS+1];
-char ** read_args(int fd, CmdHint *ch) {
-    UNUSED(ch);
+char ** read_args(int fd, InputInterface *ii) {
     int n = 0;
     buff_pos = 0;
     
-    InputInterface ii = (InputInterface) {
-        .keymap = keyset_ac, .keymap_len = sizeof(keyset_ac)/sizeof(PromptKey),
-        .cmdhint = ch, .else_handler = &ii_command_input
-    };
-
     while(n < MAX_ARGS) {
-        ReadResult ans = read_word(fd, NULL, (n == 0?&ii:NULL));
+        ReadResult ans = read_word(fd, NULL, (n == 0?ii:NULL));
         if(ans.status == RRS_OVERFLOW) {
             fprintf(stderr, "\nOverflow, aborting…\n");
             args[0] = NULL;
@@ -375,9 +399,9 @@ char ** read_args(int fd, CmdHint *ch) {
                 n--;
                 buff_pos--;
                 write(STDOUT_FILENO, "\b", 1);
-                ans = read_word(fd, args[n], (n == 0?&ii:NULL));
+                ans = read_word(fd, args[n], (n == 0?ii:NULL));
             } else
-                ans = read_word(fd, args[n], (n == 0?&ii:NULL));
+                ans = read_word(fd, args[n], (n == 0?ii:NULL));
         }
 
         args[n++] = ans.text;
@@ -407,10 +431,16 @@ void prompt(const CHLine *handlers, size_t handlers_cnt) {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &termopt);
 
     CmdHint ch = new_cmdhint(handlers, handlers_cnt);
+    InputInterface ii = (InputInterface) {
+        .keymap = keyset_ac, .keymap_len = sizeof(keyset_ac)/sizeof(PromptKey),
+        .cmdhint = &ch, .else_handler = &ii_command_input,
+        .promptString = (ConstStr){ "> ", 2 }
+    };
+
 
     while(reset_tty(),
           write(STDOUT_FILENO, "> ", 2),
-          argv = read_args(STDIN_FILENO, &ch)) {
+          argv = read_args(STDIN_FILENO, &ii)) {
         if(*argv == NULL) continue;
 
         CommandHandler ch = NULL;

@@ -21,6 +21,7 @@ typedef struct {
     DIR *dh;
     const CHLine *builtins;
     size_t builtins_count, builtins_cur;
+    StrList *hints;
 } CmdHint;
 
 CmdHint new_cmdhint(const CHLine *builtins, size_t builtins_count);

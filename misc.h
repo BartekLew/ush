@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <unistd.h>
 #include <string.h>
 #include <errno.h>
 #include <signal.h>
@@ -37,6 +38,7 @@ typedef struct {
 
 #define nostr (ConstStr) {NULL,0}
 int ConstStr_cmp(const void* a, const void*b);
+bool writestr(int fd, ConstStr str);
 
 typedef struct {
     char     *charbuff;

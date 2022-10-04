@@ -127,13 +127,14 @@ ConstStr next_cmdhint(CmdHint *ch, const char *prefix) {
         if(cmdhints.strpos == 0)
             return nostr;
 
+        ch->hints = &cmdhints;
         qsort(cmdhints.strbuff, cmdhints.strpos, sizeof(ConstStr), &ConstStr_cmp);
         uniq(&cmdhints);
 
         return ch->current_hint = cmdhints.strbuff[ch->hintpos];
     }
 
-    if(ch->hintpos+1 < cmdhints.strlen) {
+    if(ch->hintpos+1 < cmdhints.strpos) {
         return ch->current_hint = cmdhints.strbuff[++ch->hintpos];
     }
 
