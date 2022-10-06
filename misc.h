@@ -63,5 +63,6 @@ void uniq(StrList *tgt);
 
 typedef uint64_t Hash;
 Hash hashof(const char *txt, size_t len);
+Hash hashofstr(ConstStr s);
 
 #endif

@@ -4,7 +4,7 @@ CFLAGS += -g -std=c11 -Wall -Wextra -fstack-protector -pthread
 
 all: ush
 
-ush: fds.o ush.o prompt.o cmdhint.o misc.o
+ush: fds.o ush.o prompt.o cmdhint.o misc.o term.o
 
 clean:
-	rm ush ush.o fds.o prompt.o misc.o
+	rm ush ush.o fds.o prompt.o misc.o term.o

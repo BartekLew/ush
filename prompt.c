@@ -1,5 +1,6 @@
 #include "prompt.h"
 #include "cmdhint.h"
+#include "term.h"
 
 PTY *args_to_pty (char *const args[], PTY *ptys) {
     if(args[1] == NULL) {
@@ -111,17 +112,10 @@ static void set_hint(ConstStr new_hint, int line_start, InputInterface *ii) {
         size_t pos = buff_pos - line_start;
         strncpy(buff + line_start, new_hint.str, pos);
 
-        char seq[10];
-
-        // Move cursor back to beginning of command
-        int n = sprintf(seq, "\x1b[%luD", ii->cmdhint->prefix_len);
-        write(STDOUT_FILENO, seq, n);
-        write(STDOUT_FILENO, new_hint.str, new_hint.len);
-        write(STDOUT_FILENO, "\x1b[K", 3);
-        if(new_hint.len > pos) {
-            n = sprintf(seq, "\x1b[%luD", new_hint.len - pos);
-            write(STDOUT_FILENO, seq, n);
-        }
+        termcur_hmove(-ii->cmdhint->prefix_len);
+        writestr(STDOUT_FILENO, new_hint);
+        term_endline();
+        termcur_hmove(pos - new_hint.len);
     }
 }
 
@@ -149,8 +143,7 @@ int pk_bs(int fd, int line_start, InputInterface *ii) {
     UNUSED(fd);
     UNUSED(ii);
     if(buff_pos > line_start) {
-        // ^[[P - delete 1 char
-        write(STDOUT_FILENO, "\b\x1b[P", 4);
+        term_backspace();
         buff_pos--;
         return RRS_NOP;
     } else {
@@ -162,11 +155,17 @@ int pkac_bs(int fd, int line_start, InputInterface *ii) {
     UNUSED(fd);
     if(buff_pos > line_start) {
         write(STDOUT_FILENO, "\b", 1);
-        buff_pos--;
+        buff[--buff_pos] = '\0';
 
-        // Clear line if last letter removed
         if(buff_pos == line_start)
-            write(STDOUT_FILENO, "\x1b[K", 3);
+            term_endline();
+        else {
+            Hash hash = hashofstr(ii->cmdhint->current_hint);
+            ConstStr s;
+            while(s = next_cmdhint(ii->cmdhint, buff+line_start),
+                  s.str != NULL && hashofstr(s) != hash);
+        }
+            
 
         return RRS_NOP;
     } else {
@@ -199,12 +198,8 @@ int pkac_space(int fd, int line_start, InputInterface *ii) {
     if(buff_pos > line_start && ii->cmdhint->current_hint.str != NULL) {
         size_t rem = autocomplete_buff(ii->cmdhint->current_hint, line_start);
 
-        char seq[10];
         if(rem > 0) {
-            // move cursor to the end of existing autocompleted
-            // string and add a space there.
-            int n = sprintf(seq, "\x1b[%luC ", rem);
-            write(STDOUT_FILENO, seq, n);
+            termcur_hmove(rem+1);
         } else
             write(STDOUT_FILENO, " ", 1);
 
@@ -212,18 +207,6 @@ int pkac_space(int fd, int line_start, InputInterface *ii) {
     }
 
     return RRS_NOP;
-}
-
-void termcur_hmove(int n) {
-    if(n != 0) {
-        char seq[10];
-        int l;
-        if(n>0)
-            l = sprintf(seq, "\x1b[%dC", n);
-        else
-            l = sprintf(seq, "\x1b[%dD", -n);
-        write(STDOUT_FILENO, seq, l);
-    }
 }
 
 int pkac_tab(int fd, int line_start, InputInterface *ii) {
@@ -298,15 +281,8 @@ int ii_command_input(char key, int fd, int line_start, InputInterface *ii) {
         int cut = buff_pos - line_start - 1;
         int rem = hint.len - cut;
         write(STDOUT_FILENO, hint.str + cut, rem);
-        write(STDOUT_FILENO, "\x1b[K", 3);
-
-        char seq[10];
-        // ^[[K - erase to the end of line
-        // ^[[nD move n chars left
-        if(rem > 1) {
-            int n = sprintf(seq, "\x1b[%dD", rem-1);
-            write(STDOUT_FILENO, seq, n);
-        }
+        term_endline();
+        termcur_hmove(-rem+1);
     }
     return RRS_NOP;
 }
