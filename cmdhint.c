@@ -66,6 +66,23 @@ static bool has_path(CmdHint *ch) {
     return true;
 }
 
+static ConstStr try_de(CmdHint *ch, struct dirent *de) {
+    Hash hash2 = hashof(de->d_name, ch->prefix_len);
+
+    #ifdef DEBUG
+    fprintf(stderr, "%lx %lx %s\n", hash2, ch->prefix_hash, de->d_name);
+    #endif
+
+    // 0x2e = '.' - excluding . & ..
+    if(hash2 != 0x2e && hash2 != 0x2e2e && hash2 == ch->prefix_hash) {
+        const char *name = de->d_name;
+        size_t len = strlen(name);
+        return ch->current_hint = (ConstStr) { .str = name, .len = len };
+    }
+
+    return nostr;
+}
+
 static ConstStr try_next_file(CmdHint *ch) {
     struct dirent *de = readdir(ch->dh);
     if(de == NULL) {
@@ -77,20 +94,8 @@ static ConstStr try_next_file(CmdHint *ch) {
             undo my putting '\0' instead of ':' : */
         if(ch->next_path != NULL)
             ch->next_path[-1] = ':';
-    } else {
-        Hash hash2 = hashof(de->d_name, ch->prefix_len);
-
-        #ifdef DEBUG
-        fprintf(stderr, "%lx %lx %s\n", hash2, ch->prefix_hash, de->d_name);
-        #endif
-
-        // 0x2e = '.' - excluding . & ..
-        if(hash2 != 0x2e && hash2 != 0x2e2e && hash2 == ch->prefix_hash) {
-            const char *name = de->d_name;
-            size_t len = strlen(name);
-            return ch->current_hint = (ConstStr) { .str = name, .len = len };
-        }
-    }
+    } else
+        return try_de(ch, de);
 
     return nostr;
 }
@@ -123,6 +128,28 @@ ConstStr next_cmdhint(CmdHint *ch, const char *prefix) {
         ConstStr str;
         while(str = next_cmd(ch), str.str != NULL)
             pushstr(&cmdhints, str);
+
+        ch->dh = opendir(".");
+        if(ch->dh) {
+            struct dirent *de;
+            while((de = readdir(ch->dh)) != NULL) {
+                if(de->d_type != DT_DIR)
+                    continue;
+
+                ConstStr next = try_de(ch,de);
+                if(next.len == 0)
+                    continue;
+
+                char buff[next.len+2];
+                sprintf(buff, "%s/", next.str);
+                next.str = buff;
+                next.len++;
+    
+                pushstr(&cmdhints, next);
+            }
+        }
+        closedir(ch->dh);
+        ch->dh = NULL;
 
         if(cmdhints.strpos == 0)
             return nostr;

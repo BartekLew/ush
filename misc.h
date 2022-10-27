@@ -2,6 +2,7 @@
 #define __H_MISC 1
 
 #define _XOPEN_SOURCE 600
+#define _DEFAULT_SOURCE 1
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
