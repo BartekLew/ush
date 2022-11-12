@@ -76,26 +76,25 @@ typedef struct ii InputInterface;
 
 typedef struct {
     char key;
-    int (*handler)(int fd, int line_start, InputInterface *ii);
+    int (*handler)(int fd, InputInterface *ii);
 } PromptKey;
 
 struct ii {
     PromptKey *keymap;
     size_t    keymap_len;
-    int       (*else_handler) (char key, int fd, int line_start, InputInterface *ii);
+    int       (*else_handler) (char key, int fd, InputInterface *ii);
+    int       arg_start, word_start;
     ConstStr  promptString;
     CmdHint   *cmdhint;
 };
 
-int pk_eof(int fd, int line_start, InputInterface *ii) {
+int pk_eof(int fd, InputInterface *ii) {
     UNUSED(fd);
-    UNUSED(line_start);
     UNUSED(ii);
     return RRS_EOF;
 }
 
-int pk_esc(int fd, int line_start, InputInterface *ii) {
-    UNUSED(line_start);
+int pk_esc(int fd, InputInterface *ii) {
     UNUSED(ii);
     char cmd;
     if(read(fd, &cmd, 1) == 1) { 
@@ -107,10 +106,10 @@ int pk_esc(int fd, int line_start, InputInterface *ii) {
     return RRS_NOP;
 }
 
-static void set_hint(ConstStr new_hint, int line_start, InputInterface *ii) {
+static void set_hint(ConstStr new_hint, InputInterface *ii) {
     if(new_hint.str != NULL) {
-        size_t pos = buff_pos - line_start;
-        strncpy(buff + line_start, new_hint.str, pos);
+        size_t pos = buff_pos - ii->word_start;
+        strncpy(buff + ii->word_start, new_hint.str, pos);
 
         termcur_hmove(-ii->cmdhint->prefix_len);
         writestr(STDOUT_FILENO, new_hint);
@@ -119,19 +118,18 @@ static void set_hint(ConstStr new_hint, int line_start, InputInterface *ii) {
     }
 }
 
-int pkac_esc(int fd, int line_start, InputInterface *ii) {
-    UNUSED(line_start);
+int pkac_esc(int fd, InputInterface *ii) {
     UNUSED(ii);
     char cmd;
     if(read(fd, &cmd, 1) == 1) { 
         if(cmd == 0x5b) { // Move Keys
             read(fd, &cmd, 1);
-            if(cmd == 'C' && buff_pos > line_start) {
-                ConstStr new_hint = next_cmdhint(ii->cmdhint, buff+line_start);
-                set_hint(new_hint, line_start, ii);
-            } else if(cmd == 'D' && buff_pos > line_start) {
+            if(cmd == 'C' && buff_pos > ii->word_start) {
+                ConstStr new_hint = next_cmdhint(ii->cmdhint, buff+ii->word_start);
+                set_hint(new_hint, ii);
+            } else if(cmd == 'D' && buff_pos > ii->word_start) {
                 ConstStr new_hint = prev_cmdhint(ii->cmdhint);
-                set_hint(new_hint, line_start, ii);
+                set_hint(new_hint, ii);
             }
         } 
     }
@@ -139,10 +137,9 @@ int pkac_esc(int fd, int line_start, InputInterface *ii) {
     return RRS_NOP;
 }
 
-int pk_bs(int fd, int line_start, InputInterface *ii) {
+int pk_bs(int fd, InputInterface *ii) {
     UNUSED(fd);
-    UNUSED(ii);
-    if(buff_pos > line_start) {
+    if(buff_pos > ii->word_start) {
         term_backspace();
         buff_pos--;
         return RRS_NOP;
@@ -151,33 +148,47 @@ int pk_bs(int fd, int line_start, InputInterface *ii) {
     }
 }
 
-int pkac_bs(int fd, int line_start, InputInterface *ii) {
+int pkac_bs(int fd, InputInterface *ii) {
     UNUSED(fd);
-    if(buff_pos > line_start) {
+    if(buff_pos > ii->word_start) {
         write(STDOUT_FILENO, "\b", 1);
         buff[--buff_pos] = '\0';
 
-        if(buff_pos == line_start)
+        if(buff_pos == ii->word_start) {
             term_endline();
+        }
         else {
             Hash hash = hashofstr(ii->cmdhint->current_hint);
             ConstStr s;
-            while(s = next_cmdhint(ii->cmdhint, buff+line_start),
+            while(s = next_cmdhint(ii->cmdhint, buff+ii->word_start),
                   s.str != NULL && hashofstr(s) != hash);
         }
             
 
         return RRS_NOP;
     } else {
-        ii->cmdhint->current_hint = nostr;
-        return RRS_BACKSPACE;
+        if(ii->word_start > ii->arg_start) {
+            ii->word_start -= 2;
+            while(ii->word_start > ii->arg_start
+                    && buff[ii->word_start != '/'])
+                ii->word_start--;
+            if(ii->word_start == ii->arg_start) {
+                ii->cmdhint->ht_flags = HT_CMD | HT_DIR;
+            }
+            buff[--buff_pos] = '\0';
+            termcur_hmove(-1);
+            return RRS_NOP;
+        } else {
+            ii->cmdhint->current_hint = nostr;
+            return RRS_BACKSPACE;
+        }
     }
 }
 
-int pk_space(int fd, int line_start, InputInterface *ii) {
+int pk_space(int fd, InputInterface *ii) {
     UNUSED(fd);
     UNUSED(ii);
-    if(buff_pos > line_start) {
+    if(buff_pos > ii->word_start) {
         write(STDOUT_FILENO, " ", 1);
         return RRS_EOW;
     }
@@ -185,18 +196,18 @@ int pk_space(int fd, int line_start, InputInterface *ii) {
     return RRS_NOP;
 }
 
-size_t autocomplete_buff(ConstStr str, int line_start) {
-    size_t rem = str.len - (buff_pos - line_start);
-    strcpy(buff + line_start, str.str);
+size_t autocomplete_buff(ConstStr str, int word_start) {
+    size_t rem = str.len - (buff_pos - word_start);
+    strcpy(buff + word_start, str.str);
     buff_pos += rem;
 
     return rem;
 }
 
-int pkac_space(int fd, int line_start, InputInterface *ii) {
+int pkac_space(int fd, InputInterface *ii) {
     UNUSED(fd);
-    if(buff_pos > line_start && ii->cmdhint->current_hint.str != NULL) {
-        size_t rem = autocomplete_buff(ii->cmdhint->current_hint, line_start);
+    if(buff_pos > ii->word_start && ii->cmdhint->current_hint.str != NULL) {
+        size_t rem = autocomplete_buff(ii->cmdhint->current_hint, ii->word_start);
 
         if(rem > 0) {
             termcur_hmove(rem+1);
@@ -209,9 +220,9 @@ int pkac_space(int fd, int line_start, InputInterface *ii) {
     return RRS_NOP;
 }
 
-int pkac_tab(int fd, int line_start, InputInterface *ii) {
+int pkac_tab(int fd, InputInterface *ii) {
     UNUSED(fd);
-    if(buff_pos > line_start && ii->cmdhint->hints->strpos > 0) {
+    if(buff_pos > ii->word_start && ii->cmdhint->hints->strpos > 0) {
         printf("\n");
         StrList *hs = ii->cmdhint->hints;
         for(size_t i = 0; i < hs->strpos; i++) {
@@ -220,18 +231,76 @@ int pkac_tab(int fd, int line_start, InputInterface *ii) {
         printf("\n");
 
         writestr(STDOUT_FILENO, ii->promptString);
+        if(ii->word_start > ii->arg_start) {
+            write(STDOUT_FILENO, buff+ii->arg_start, ii->word_start-ii->arg_start);
+        }
         writestr(STDOUT_FILENO, ii->cmdhint->current_hint);
-        termcur_hmove((buff_pos - line_start)-ii->cmdhint->current_hint.len);
+        termcur_hmove((buff_pos - ii->word_start)-ii->cmdhint->current_hint.len);
     }
     return RRS_NOP;   
 }
 
-int pk_ret(int fd, int line_start, InputInterface *ii) {
+void enter_directory(InputInterface *ii) {
+    CmdHint *ch = ii->cmdhint;
+    size_t rem = autocomplete_buff(ch->current_hint, ii->word_start);
+    termcur_hmove(rem);
+
+    ch->prefix_len = 0;
+    ch->current_path = (ConstStr) {
+        .str = buff + ii->arg_start,
+        .len = buff_pos - ii->arg_start
+    };
+
+    closedir(ch->dh);
+    ch->dh = NULL;
+    ch->dh = opendir(ch->current_path.str);
+
+    if(ch->dh == NULL)
+        fprintf(stderr, "Can't open %s\n", ch->current_path.str);
+
+    ii->word_start = buff_pos;
+    ii->cmdhint->ht_flags = HT_DIR | HT_EXEC | HT_CUSTOMDIR;
+}
+
+int pkac_slash(int fd, InputInterface *ii) {
     UNUSED(fd);
-    UNUSED(line_start);
+
+    if(buff_pos == ii->arg_start) {
+        buff[buff_pos++] = '/';
+        buff[buff_pos] = '\0';
+        write(STDOUT_FILENO, "/", 1);
+
+        CmdHint *ch = ii->cmdhint;
+        ch->prefix_len = 0;
+        ch->current_path = (ConstStr) {
+            .str = "/", .len = 1
+        };
+        closedir(ch->dh);
+        ch->dh = NULL;
+        ch->dh = opendir(ch->current_path.str);
+
+        if(ch->dh == NULL)
+            fprintf(stderr, "Can't open %s\n", ch->current_path.str);
+
+        ii->word_start = buff_pos;
+        ii->cmdhint->ht_flags = HT_DIR | HT_EXEC | HT_CUSTOMDIR;
+
+        return RRS_NOP;
+    }
+
+    ConstStr chint = ii->cmdhint->current_hint;
+    if(chint.len > 0 && chint.str[chint.len-1] == '/') {
+        enter_directory(ii);
+    }
+
+    return RRS_NOP;
+}
+
+int pk_ret(int fd, InputInterface *ii) {
+    UNUSED(fd);
     UNUSED(ii);
 
-    if(buff_pos > line_start) {
+    if(buff_pos > ii->word_start) {
         write(STDOUT_FILENO, "\n", 1);
         return RRS_EOL;
     } else {
@@ -239,11 +308,11 @@ int pk_ret(int fd, int line_start, InputInterface *ii) {
     }
 }
 
-int pkac_ret(int fd, int line_start, InputInterface *ii) {
+int pkac_ret(int fd, InputInterface *ii) {
     UNUSED(fd);
 
-    if(buff_pos > line_start && ii->cmdhint != NULL && ii->cmdhint->current_hint.str != NULL) {
-        autocomplete_buff(ii->cmdhint->current_hint, line_start);
+    if(buff_pos > ii->word_start && ii->cmdhint != NULL && ii->cmdhint->current_hint.str != NULL) {
+        autocomplete_buff(ii->cmdhint->current_hint, ii->word_start);
         write(STDOUT_FILENO, "\n", 1);
         
         return RRS_EOL;
@@ -266,19 +335,20 @@ PromptKey keyset_ac[] = {
     {.key = IN_BACKSPACE, .handler = &pkac_bs},
     {.key = ' ',          .handler = &pkac_space},
     {.key = '\t',         .handler = &pkac_tab},
-    {.key = '\n',         .handler = &pkac_ret}
+    {.key = '\n',         .handler = &pkac_ret},
+    {.key = '/',          .handler = &pkac_slash}
 };
 
-int ii_command_input(char key, int fd, int line_start, InputInterface *ii) {
+int ii_command_input(char key, int fd, InputInterface *ii) {
     UNUSED(fd);
     buff[buff_pos++] = key;
     buff[buff_pos] = 0;
 
-    ConstStr hint = next_cmdhint(ii->cmdhint, buff + line_start);
+    ConstStr hint = next_cmdhint(ii->cmdhint, buff + ii->word_start);
     if(hint.str == NULL) {
         buff_pos--;
     } else {
-        int cut = buff_pos - line_start - 1;
+        int cut = buff_pos - ii->word_start - 1;
         int rem = hint.len - cut;
         write(STDOUT_FILENO, hint.str + cut, rem);
         term_endline();
@@ -288,10 +358,10 @@ int ii_command_input(char key, int fd, int line_start, InputInterface *ii) {
 }
 
 #define RRS_IGNORE 0xffff
-ReadResult try_keys(PromptKey *keydefs, size_t len, char in, int fd, int line_start, InputInterface *ii) {
+ReadResult try_keys(PromptKey *keydefs, size_t len, char in, int fd, InputInterface *ii) {
     for(uint i = 0; i < len; i++) {
         if(in == keydefs[i].key) {
-            int ret = keydefs[i].handler(fd, line_start, ii);
+            int ret = keydefs[i].handler(fd, ii);
             if(ret == RRS_NOP)
                 return (ReadResult) {.status = RRS_NOP};
 
@@ -300,7 +370,7 @@ ReadResult try_keys(PromptKey *keydefs, size_t len, char in, int fd, int line_st
             } else {
                 buff[buff_pos++] = 0;
                 return (ReadResult) {.status = ret,
-                                     .text = buff + line_start};
+                                     .text = buff + ii->word_start};
             }
         }
     }
@@ -310,10 +380,9 @@ ReadResult try_keys(PromptKey *keydefs, size_t len, char in, int fd, int line_st
 
 ReadResult read_word(int fd, char *override_arg, InputInterface *ii) {
     int n;
-    UNUSED(ii);
-    int line_start = buff_pos;
+    ii->arg_start = ii->word_start = buff_pos;
     if(override_arg != NULL) {
-        line_start = override_arg - buff;
+        ii->word_start = override_arg - buff;
     }
 
     char sbuff;
@@ -321,12 +390,12 @@ ReadResult read_word(int fd, char *override_arg, InputInterface *ii) {
           && (n = read(fd, &sbuff, 1)) > 0) {
 
         ReadResult ret = { .status = RRS_IGNORE };
-        if(ii != NULL && ii->keymap != NULL)
+        if(ii->keymap != NULL)
             ret = try_keys(ii->keymap, ii->keymap_len,
-                           sbuff, fd, line_start, ii);
+                           sbuff, fd, ii);
         if(ret.status == RRS_IGNORE)
             ret = try_keys(keyset, sizeof(keyset)/sizeof(PromptKey),
-                           sbuff, fd, line_start, ii);
+                           sbuff, fd, ii);
 
         if(ret.status == RRS_NOP)
             continue;
@@ -334,14 +403,14 @@ ReadResult read_word(int fd, char *override_arg, InputInterface *ii) {
         if(ret.status != RRS_IGNORE)
             return ret;
 
-        if(ii != NULL && ii->else_handler != NULL) {
-            int status = ii->else_handler(sbuff, fd, line_start, ii);
+        if(ii->else_handler != NULL) {
+            int status = ii->else_handler(sbuff, fd, ii);
             if(status == RRS_NOP)
                 continue;
             if(status != RRS_IGNORE) {
                 return (ReadResult) {
                     .status = status,
-                    .text = buff + line_start
+                    .text = buff + ii->word_start
                 };
             }
         }
@@ -351,7 +420,7 @@ ReadResult read_word(int fd, char *override_arg, InputInterface *ii) {
     }
 
     return (ReadResult) { .status = RRS_OVERFLOW,
-                          .text = buff + line_start };
+                          .text = buff + ii->word_start };
 }
 
 char *args[MAX_ARGS+1];
@@ -359,8 +428,9 @@ char ** read_args(int fd, InputInterface *ii) {
     int n = 0;
     buff_pos = 0;
     
+    InputInterface blankII = (InputInterface) {0};
     while(n < MAX_ARGS) {
-        ReadResult ans = read_word(fd, NULL, (n == 0?ii:NULL));
+        ReadResult ans = read_word(fd, NULL, (n == 0?ii:&blankII));
         if(ans.status == RRS_OVERFLOW) {
             fprintf(stderr, "\nOverflow, aborting…\n");
             args[0] = NULL;
@@ -375,9 +445,9 @@ char ** read_args(int fd, InputInterface *ii) {
                 n--;
                 buff_pos--;
                 write(STDOUT_FILENO, "\b", 1);
-                ans = read_word(fd, args[n], (n == 0?ii:NULL));
+                ans = read_word(fd, args[n], (n == 0?ii:&blankII));
             } else
-                ans = read_word(fd, args[n], (n == 0?ii:NULL));
+                ans = read_word(fd, args[n], (n == 0?ii:&blankII));
         }
 
         args[n++] = ans.text;
@@ -410,7 +480,7 @@ void prompt(const CHLine *handlers, size_t handlers_cnt) {
     InputInterface ii = (InputInterface) {
         .keymap = keyset_ac, .keymap_len = sizeof(keyset_ac)/sizeof(PromptKey),
         .cmdhint = &ch, .else_handler = &ii_command_input,
-        .promptString = (ConstStr){ "> ", 2 }
+        .promptString = (ConstStr){ "> ", 2 },
     };
 
 

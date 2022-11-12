@@ -22,17 +22,22 @@ void resetlist (StrList *tgt) {
     tgt->charpos = tgt->strpos = 0;
 }
 
-int ConstStr_cmp(const void* aptr, const void *bptr) {
-    ConstStr a = *((const ConstStr*)aptr);
-    ConstStr b = *((const ConstStr*)bptr);
+ConstStr path_str(ConstStr s) {
+    while(s.str[s.len-1] == '/') s.len--;
+    return s;
+}
+
+int ConstStr_pathcmp(const void* aptr, const void *bptr) {
+    ConstStr a = path_str(*((const ConstStr*)aptr));
+    ConstStr b = path_str(*((const ConstStr*)bptr));
 
     size_t cmplen = (a.len > b.len)?b.len:a.len;
-    for(size_t i = 0; i <= cmplen; i++) {
+    for(size_t i = 0; i < cmplen; i++) {
         int rel = a.str[i] - b.str[i];
         if(rel != 0) return rel;
     }
 
-    return 0;
+    return a.len - b.len;
 }
 
 bool writestr(int fd, ConstStr str) {

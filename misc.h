@@ -38,7 +38,7 @@ typedef struct {
 } ConstStr;
 
 #define nostr (ConstStr) {NULL,0}
-int ConstStr_cmp(const void* a, const void*b);
+int ConstStr_pathcmp(const void* a, const void*b);
 bool writestr(int fd, ConstStr str);
 
 typedef struct {

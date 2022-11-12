@@ -2,16 +2,19 @@
 
 CmdHint new_cmdhint(const CHLine *builtins, size_t builtins_count) {
     return (CmdHint) { .path = NULL, .dh = NULL, .prefix_hash = 0, .prefix_len = 0,
-                       .builtins = builtins, .builtins_count = builtins_count };
+                       .builtins = builtins, .builtins_count = builtins_count,
+                       .ht_flags = HT_CMD | HT_DIR };
 }
 
 static bool apply_prefix(CmdHint *ch, const char *prefix) {
     size_t plen = strlen(prefix);
     Hash nhash = hashof(prefix, plen);
     if(ch->prefix_len != plen || nhash != ch->prefix_hash) {
-        if(ch->next_path != NULL)
-            ch->next_path[-1] = ':';
-        ch->path = getenv("PATH");
+        if(ch->ht_flags & HT_CMD) {
+            if(ch->next_path != NULL)
+                ch->next_path[-1] = ':';
+            ch->path = getenv("PATH");
+        }
 
         #ifdef DEBUG
         fprintf(stderr, "HOME>%s\n", ch->path);
@@ -21,7 +24,8 @@ static bool apply_prefix(CmdHint *ch, const char *prefix) {
         ch->next_path = NULL;
         ch->prefix_hash = nhash;
         ch->prefix_len = plen;
-        ch->dh = NULL;
+        if((ch->ht_flags & HT_CUSTOMDIR) == 0)
+            ch->dh = NULL;
         ch->builtins_cur = 0;
         ch->hintpos = 0;
         
@@ -73,8 +77,7 @@ static ConstStr try_de(CmdHint *ch, struct dirent *de) {
     fprintf(stderr, "%lx %lx %s\n", hash2, ch->prefix_hash, de->d_name);
     #endif
 
-    // 0x2e = '.' - excluding . & ..
-    if(hash2 != 0x2e && hash2 != 0x2e2e && hash2 == ch->prefix_hash) {
+    if(hash2 == ch->prefix_hash) {
         const char *name = de->d_name;
         size_t len = strlen(name);
         return ch->current_hint = (ConstStr) { .str = name, .len = len };
@@ -94,7 +97,7 @@ static ConstStr try_next_file(CmdHint *ch) {
             undo my putting '\0' instead of ':' : */
         if(ch->next_path != NULL)
             ch->next_path[-1] = ':';
-    } else
+    } else if(de->d_type != DT_DIR)
         return try_de(ch, de);
 
     return nostr;
@@ -120,42 +123,80 @@ ConstStr next_cmd(CmdHint *ch) {
     return nostr;
 }
 
+bool test_hint_file(struct dirent *de, CmdHint *ch) {
+    if(ch->ht_flags & HT_DIR && de->d_type == DT_DIR)
+        return true;
+
+    if((ch->ht_flags & HT_ANYFILE) == HT_ANYFILE && de->d_type == DT_REG)
+        return true;
+
+    if(ch->ht_flags & HT_EXEC && de->d_type == DT_REG) {
+        struct stat mod;
+        size_t nlen = strlen(de->d_name);
+        char path[ch->current_path.len + nlen + 1];
+        sprintf(path, "%.*s%s", (int)ch->current_path.len, ch->current_path.str, de->d_name);
+        if(stat(path, &mod) == 0 && mod.st_mode & 00111)
+            return true;
+    }
+            
+    return false;
+}
+
+
 STATIC_STRLIST(cmdhints, 40000, 4000);
 
 ConstStr next_cmdhint(CmdHint *ch, const char *prefix) {
     if(apply_prefix(ch, prefix)) {
         resetlist(&cmdhints);
         ConstStr str;
-        while(str = next_cmd(ch), str.str != NULL)
-            pushstr(&cmdhints, str);
+        if(ch->ht_flags & HT_CMD)
+            while(str = next_cmd(ch), str.str != NULL)
+                pushstr(&cmdhints, str);
 
-        ch->dh = opendir(".");
-        if(ch->dh) {
-            struct dirent *de;
-            while((de = readdir(ch->dh)) != NULL) {
-                if(de->d_type != DT_DIR)
-                    continue;
+        if(ch->ht_flags & ~(HT_CMD | HT_CUSTOMDIR)) {
+            if((ch->ht_flags & HT_CUSTOMDIR) == 0)
+                ch->dh = opendir(".");
 
-                ConstStr next = try_de(ch,de);
-                if(next.len == 0)
-                    continue;
-
-                char buff[next.len+2];
-                sprintf(buff, "%s/", next.str);
-                next.str = buff;
-                next.len++;
+            if(ch->dh) {
+                struct dirent *de;
+                while((de = readdir(ch->dh)) != NULL) {
+                    if(!test_hint_file(de, ch))
+                        continue;
     
-                pushstr(&cmdhints, next);
+                    ConstStr next = try_de(ch,de);
+                    if(next.len == 0)
+                        continue;
+
+                    if(de->d_type == DT_DIR) {
+                        char buff[next.len+2];
+                        sprintf(buff, "%s/", next.str);
+                        next.str = buff;
+                        next.len++;
+    
+                        pushstr(&cmdhints, next);
+                    } else
+                        pushstr(&cmdhints,
+                                (ConstStr){
+                                    .str = de->d_name,
+                                    .len = strlen(de->d_name)
+                                });
+                                
+                }
+            }
+
+            if(ch->ht_flags & HT_CUSTOMDIR) {
+                rewinddir(ch->dh);
+            } else {
+                closedir(ch->dh);
+                ch->dh = NULL;
             }
         }
-        closedir(ch->dh);
-        ch->dh = NULL;
 
         if(cmdhints.strpos == 0)
             return nostr;
 
         ch->hints = &cmdhints;
-        qsort(cmdhints.strbuff, cmdhints.strpos, sizeof(ConstStr), &ConstStr_cmp);
+        qsort(cmdhints.strbuff, cmdhints.strpos, sizeof(ConstStr), &ConstStr_pathcmp);
         uniq(&cmdhints);
 
         return ch->current_hint = cmdhints.strbuff[ch->hintpos];
