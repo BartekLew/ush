@@ -131,7 +131,11 @@ int pkac_esc(int fd, InputInterface *ii) {
                 ConstStr new_hint = prev_cmdhint(ii->cmdhint);
                 set_hint(new_hint, ii);
             }
-        } 
+        } else if (cmd == ESC) { // Double ESC
+            term_endline();
+            ii->keymap = NULL;
+            ii->else_handler = NULL;
+        }
     }
 
     return RRS_NOP;
