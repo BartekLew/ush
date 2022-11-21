@@ -9,15 +9,18 @@
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
+#include "buffer.h"
 
 typedef struct PTY
 {
     int   master, slave;
     pid_t pid;
     bool  suspended;
+
+    BufferThread *out_bth;
 } PTY;
 
-#define NO_PTY (PTY){-1,-1,-1, 0}
+#define NO_PTY (PTY){-1,-1,-1, 0, NULL}
 #define PTY_ISOK(PTY) (PTY.master > 0 && PTY.slave > 0)
 
 #define MAX_PTYS 10

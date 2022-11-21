@@ -9,8 +9,20 @@
 
 void ch_cat(char * const args[], PTY *ptys) {
     PTY *pty = args_to_pty(args, ptys);
-    if(pty != NULL)
-        reprint(pty);
+    if(pty != NULL) {
+        pty->out_bth->sleep = true;
+        FlatBuff *buff = &(pty->out_bth->buff);
+        write(STDOUT_FILENO, buff->data, buff->pos);
+        buff->pos = 0;
+        pty->out_bth->sleep = false;
+
+        if(pty->out_bth->finished) {
+            int status;
+            waitpid(pty->pid, &status, 0);
+            printf("process %d finished with status %d\n", pty->pid, status);
+            *pty = NO_PTY;
+        }
+    }
 }
 
 void ch_fg(char *const args[], PTY *ptys) {
@@ -18,7 +30,8 @@ void ch_fg(char *const args[], PTY *ptys) {
     if(pty != NULL) {
         int status = pty_foreground(pty);
         if(status != STOP_DEADMASK) {
-            printf("pid #%d finished with status %d\n", (int)pty->pid, status);
+            if(status != 0)
+                printf("pid #%d finished with status %d\n", (int)pty->pid, status);
             *pty = NO_PTY;
         } else {
             kill(pty->pid, SIGSTOP);

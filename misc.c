@@ -87,3 +87,27 @@ void uniq(StrList *tgt) {
     tgt->strpos = cur;
 }
 
+FlatBuff FlatBuff_new(size_t len) {
+    return (FlatBuff) {
+        .data = malloc(len),
+        .len = len,
+        .pos = 0
+    };
+}
+
+void FlatBuff_free(FlatBuff buff) {
+    free(buff.data);
+}
+
+int FlatBuff_readfh(FlatBuff *buff, int fh) {
+    int rem = (int)buff->len - (int)buff->pos;
+    if(rem <= 0)
+        return 0;
+
+    int len = read(fh, buff->data + buff->pos, rem);
+    if(len > 0)
+        buff->pos += len;
+
+    return len;
+}
+

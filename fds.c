@@ -1,4 +1,5 @@
 #include "fds.h"
+#include <sys/wait.h>
 
 PTY newPty() {
     PTY ans = {.suspended = false};
@@ -64,8 +65,21 @@ bool spawn(char *const args[], PTY *ptys)
     else if (p > 0)
     {
         close(pty->slave);
+
         pty->pid = p;
-        fprintf(stderr, "spawned new pty #%d\n", ptyi);
+        pty->out_bth = buffer_thread(pty->master);
+        if(buffer_wait(pty->out_bth, 100000)) {
+            write(STDOUT_FILENO, pty->out_bth->buff.data, pty->out_bth->buff.pos);
+            pty->out_bth->free = 0;
+            int status;
+            waitpid(pty->pid, &status, 0);
+            if(status != 0)
+                fprintf(stderr, "process #%d exited with exit code %d.\n",
+                        pty->pid, status);
+            *pty = NO_PTY;
+        } else {
+            fprintf(stderr, "spawned new pty #%d\n", ptyi);
+        }
         return true;
     }
 

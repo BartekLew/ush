@@ -28,6 +28,9 @@ bool fg_filter(const char *buff, int size) {
 }
 
 int pty_foreground(PTY *pty) {
+    pty->out_bth->canceled = 1;
+    write(STDOUT_FILENO, pty->out_bth->buff.data, pty->out_bth->buff.pos);
+
     if(pty->suspended) {
         kill(pty->pid, SIGCONT);
         pty->suspended = false;

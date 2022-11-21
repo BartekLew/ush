@@ -31,6 +31,8 @@ typedef unsigned int uint;
 #define MAX_ARGS 1024
 #define MAX_CMDHINTS 4000
 #define CMD_NAMEBUFF_LEN 40000
+#define PTY_OUTBUFF_LEN 0x2600
+#define BUFFTHREAD_MAX 16
 
 typedef struct {
     const char *str;
@@ -65,5 +67,14 @@ void uniq(StrList *tgt);
 typedef uint64_t Hash;
 Hash hashof(const char *txt, size_t len);
 Hash hashofstr(ConstStr s);
+
+typedef struct {
+    char   *data;
+    size_t len, pos;
+} FlatBuff;
+
+FlatBuff FlatBuff_new(size_t len);
+int FlatBuff_readfh(FlatBuff *buff, int fh);
+void FlatBuff_free(FlatBuff buff);
 
 #endif
