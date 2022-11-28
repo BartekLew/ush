@@ -124,7 +124,7 @@ ConstStr next_cmd(CmdHint *ch) {
 }
 
 bool test_hint_file(struct dirent *de, CmdHint *ch) {
-    if(ch->ht_flags & HT_DIR && de->d_type == DT_DIR)
+    if(ch->ht_flags & (HT_DIR|HT_ANYFILE) && de->d_type == DT_DIR)
         return true;
 
     if((ch->ht_flags & HT_ANYFILE) == HT_ANYFILE && de->d_type == DT_REG)
