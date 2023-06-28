@@ -6,9 +6,9 @@ use std::str;
 use std::collections::HashMap;
 mod hint;
 
-use crate::hint::ShCommands;
+use crate::hint::*;
 
-type KAHandler = fn(&mut TermReader, &TermCfg, &[u8]) -> bool;
+type KAHandler = for <'a> fn(TermReader<'a>, &'a TermCfg, &[u8]) -> (bool, TermReader<'a>);
 
 #[derive(Clone,Copy)]
 enum KeyAction {
@@ -16,7 +16,7 @@ enum KeyAction {
 }
 
 impl KeyAction {
-    fn run (&self, tr: &mut TermReader, cfg: &TermCfg, keys: &[u8]) -> bool {
+    fn run<'a> (&self, tr: TermReader<'a>, cfg: &'a TermCfg, keys: &[u8]) -> (bool, TermReader<'a>) {
         match self {
             KeyAction::Action(x) => x(tr, cfg, keys)
         }
@@ -41,36 +41,60 @@ impl TermCfg {
     }
 }
 
-struct TermReader {
+struct TermReader<'a> {
     current : String,
-    pub args : Vec<String>
+    pub args : Vec<String>,
+    chint : Option<ExcerptIter<'a, String>>
 }
 
-impl TermReader {
+impl<'a> TermReader<'a> {
     fn new() -> Self {
         TermReader {
             current: String::from(""),
-            args: vec![]
+            args: vec![],
+            chint: None
         }
     }
 
-    fn pushstr(&mut self) {
+    fn pushstr(self) -> TermReader<'a> {
         if self.current.len() > 0 {
-            self.args.push(self.current.clone());
-            self.current = String::from("");
+            let mut na = self.args;
+            na.push(self.current.clone());
+
+            TermReader{ current: String::from(""),
+                        args: na,
+                        chint: self.chint }
+        } else {
+            self
         }
     }
 
-    fn autocomplete(&mut self, cfg : &TermCfg) {
+    fn autocomplete(mut self) -> TermReader<'a> {
         if self.current.len() > 0 {
-            let chint = cfg.hints.for_prefix(&self.current)[0];
-            Term.hmove((chint.len() - self.current.len() + 1) as i32);
-            self.current = chint.to_string();
-            self.pushstr();
+            match &self.chint {
+                Some(ch) => {
+                    match ch.peek() {
+                        Some(chint) => {
+                            Term.hmove((chint.len() - self.current.len() + 1) as i32);
+                            self.current = chint.to_string();
+                            self.pushstr()
+                        },
+                        None => self
+                    }
+                },
+                None => self
+            }
+        } else {
+            self
         }
     }
 
-    pub fn accept(&mut self, cfg : &TermCfg, keys : &[u8]) -> bool {
+    pub fn with_current(self, val : String) -> TermReader<'a> {
+        TermReader { current: val, args: self.args, chint: self.chint }
+    }
+
+    pub fn accept<'b>(self, cfg : &'b TermCfg, keys : &[u8]) -> (bool, TermReader<'b>)
+            where 'a : 'b {
         if cfg.key_map.contains_key(&keys[0]) {
             let x = cfg.key_map[&keys[0]];
             x.run(self, cfg, keys)
@@ -79,8 +103,8 @@ impl TermReader {
                 Some(x) => x.run(self, cfg, keys),
                 None => {
                     echo(keys);
-                    self.current = self.current.clone() + str::from_utf8(keys).unwrap();
-                    true
+                    let nc = self.current.clone() + str::from_utf8(keys).unwrap();
+                    (true, self.with_current(nc))
                 }
             }
         }
@@ -113,6 +137,10 @@ impl Term {
 
         self
     }
+
+    fn move_left(&self, amount : usize) -> &Term {
+        self.hmove(-(amount as i32))
+    }
 }
 
 impl Drop for Term {
@@ -121,64 +149,111 @@ impl Drop for Term {
     }
 }
 
-fn reading(input : &mut dyn Read, tr : &mut TermReader, cfg : TermCfg) {
+fn reading(input : &mut dyn Read, cfg : TermCfg) -> Vec<String> {
     let mut buff : [u8;10] = [0;10];
+    let mut tr = TermReader::new();
 
     while match input.read(&mut buff) {
-        Ok(len) => { tr.accept(&cfg, &buff[0..len]) },
+        Ok(len) => { let (cont, ntr) = tr.accept(&cfg, &buff[0..len]);
+                     tr = ntr;
+                     cont},
         Err(e) => {
             println!("ERROR: {}", e);
             false
         }
     } {}
+
+    tr.args
 }
 
-fn ac_elsekey(tr: &mut TermReader, cfg: &TermCfg, keys: &[u8]) -> bool {
+fn ac_elsekey<'a> (tr: TermReader<'a>, cfg: &'a TermCfg, keys: &[u8]) -> (bool, TermReader<'a>) {
     if tr.args.len() > 0 {
         echo(keys);
-        tr.current = tr.current.clone() + str::from_utf8(keys).unwrap();
-        return true
+        let nc = tr.current.clone() + str::from_utf8(keys).unwrap();
+        return (true, tr.with_current(nc))
     }
 
     let trial = tr.current.clone() + str::from_utf8(keys).unwrap();
-    let newhints = cfg.hints.for_prefix(&trial);
-    if newhints.len() > 0 {
-        let first = newhints[0];
-        Term.echo(first.get(tr.current.len()..).unwrap().as_bytes())
-            .endline()
-            .hmove(-((first.len() - tr.current.len() - 1) as i32));
-        
-        tr.current = tr.current.clone() + str::from_utf8(keys).unwrap();
+    match cfg.hints.for_prefix(&trial) {
+        Some(mut it) => {
+            let first = it.get().unwrap();
+            match first.get(tr.current.len()..) {
+                Some(s) => {
+                    Term.echo(s.as_bytes())
+                        .endline()
+                        .move_left(s.len() - 1);
+                }, None => ()
+            }
+    
+            (true, TermReader {
+                current: trial,
+                chint: Some(it),
+                args: tr.args
+            })
+        },
+        None => (true, tr)
     }
-
-    true
 }
 
-fn ac_space (tr: &mut TermReader, cfg: &TermCfg,  _: &[u8]) -> bool {
+fn ac_bs<'a> (tr: TermReader<'a>, cfg: &'a TermCfg, keys: &[u8]) -> (bool, TermReader<'a>) {
     if tr.args.len() > 0 {
-        if tr.current.len() > 0 {
-            tr.pushstr();
-        }
-        return true
+        echo(keys);
+        let mut nc = tr.current.clone();
+        nc.pop();
+        return (true, tr.with_current(nc))
     }
 
-    tr.autocomplete(cfg);
+    if tr.current.len() == 0 {
+        return (true, tr);
+    }
 
-    true
+    let mut trial = tr.current.clone();
+    trial.pop();
+    match cfg.hints.for_prefix(&trial) {
+        Some(mut it) => {
+            let first = it.get().unwrap();
+            let term = Term;
+            term.hmove(-1);
+            match first.get(trial.len()..) {
+                Some(s) => { term.echo(s.as_bytes())
+                                 .endline()
+                                 .hmove(-(s.len() as i32)); }
+                None => ()
+            }
+    
+            (true, TermReader {
+                current: trial,
+                chint: Some(it),
+                args: tr.args
+            })
+        },
+        None => (true, tr)
+    }
 }
 
-fn ac_ret (tr: &mut TermReader, cfg: &TermCfg, _: &[u8]) -> bool {
+fn ac_space<'a> (tr: TermReader<'a>, _cfg: &'a TermCfg,  _: &[u8]) -> (bool,TermReader<'a>) {
     if tr.args.len() > 0 {
         if tr.current.len() > 0 {
-            tr.pushstr();
+            return (true, tr.pushstr());
         }
-        return false
+        return (true, tr)
     }
 
-    tr.autocomplete(cfg);
+    (true, tr.autocomplete())
+}
+
+fn ac_ret<'a> (tr: TermReader<'a>, _cfg: &'a TermCfg, _: &[u8]) -> (bool, TermReader<'a>) {
+    if tr.args.len() > 0 {
+        if tr.current.len() > 0 {
+            return (false, tr.pushstr());
+        }
+        return (false, tr)
+    }
+
+    let ntr = tr.autocomplete();
     Term.echo(b"\n");
 
-    false
+    (false,ntr)
 }
 
 fn main() {
@@ -187,7 +262,8 @@ fn main() {
 
     let initial_keys = HashMap::from([
         (b' ', KeyAction::Action(ac_space)), 
-        (b'\n', KeyAction::Action(ac_ret))
+        (b'\n', KeyAction::Action(ac_ret)),
+        (0x7f, KeyAction::Action(ac_bs)),
     ]);
 
     let mut tos = Termios::from_fd(ifd).unwrap();
@@ -195,9 +271,8 @@ fn main() {
     tcsetattr(ifd, TCSAFLUSH, &tos).unwrap();
 
     let cfg = TermCfg::new(initial_keys, Some(KeyAction::Action(ac_elsekey)));
-    let mut tr = TermReader::new();
-    reading(&mut input, &mut tr, cfg);
-    println!("{}", tr.args.join(","));
+    let args = reading(&mut input, cfg);
+    println!("{}", args.join(","));
 
     tos.c_lflag |= ECHO | ICANON;
     tcsetattr(ifd, TCSAFLUSH, &tos).unwrap();
