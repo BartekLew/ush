@@ -2,18 +2,19 @@ use std::collections::HashMap;
 use std::str;
 
 use crate::term::*;
+use crate::hint::*;
 
-pub fn default_term_cfg() -> TermCfg {
+pub fn default_term<'a>() -> TermReader<'a> {
     let initial_keys = HashMap::from([
         (b' ', KeyAction::Action(ac_space)),
         (b'\n', KeyAction::Action(ac_ret)),
         (0x7f, KeyAction::Action(ac_bs))
     ]);
     
-    TermCfg::new(initial_keys, Some(KeyAction::Action(ac_elsekey)))
+    TermReader::new(initial_keys, Some(KeyAction::Action(ac_elsekey)))
 }
 
-fn ac_elsekey<'a> (tr: TermReader<'a>, cfg: &'a TermCfg, keys: &[u8]) -> (bool, TermReader<'a>) {
+fn ac_elsekey<'a> (tr: TermReader<'a>, hints: &'a ShCommands, keys: &[u8]) -> (bool, TermReader<'a>) {
     if tr.args.len() > 0 {
         echo(keys);
         let nc = tr.current.clone() + str::from_utf8(keys).unwrap();
@@ -21,7 +22,7 @@ fn ac_elsekey<'a> (tr: TermReader<'a>, cfg: &'a TermCfg, keys: &[u8]) -> (bool, 
     }
 
     let trial = tr.current.clone() + str::from_utf8(keys).unwrap();
-    match cfg.hints.for_prefix(&trial) {
+    match hints.for_prefix(&trial) {
         Some(mut it) => {
             let first = it.get().unwrap();
             match first.get(tr.current.len()..) {
@@ -35,14 +36,16 @@ fn ac_elsekey<'a> (tr: TermReader<'a>, cfg: &'a TermCfg, keys: &[u8]) -> (bool, 
             (true, TermReader {
                 current: trial,
                 chint: Some(it),
-                args: tr.args
+                args: tr.args,
+                key_map: tr.key_map,
+                elsekey: tr.elsekey
             })
         },
         None => (true, tr)
     }
 }
 
-fn ac_bs<'a> (tr: TermReader<'a>, cfg: &'a TermCfg, keys: &[u8]) -> (bool, TermReader<'a>) {
+fn ac_bs<'a> (tr: TermReader<'a>, hints: &'a ShCommands, keys: &[u8]) -> (bool, TermReader<'a>) {
     if tr.args.len() > 0 {
         echo(keys);
         let mut nc = tr.current.clone();
@@ -56,7 +59,7 @@ fn ac_bs<'a> (tr: TermReader<'a>, cfg: &'a TermCfg, keys: &[u8]) -> (bool, TermR
 
     let mut trial = tr.current.clone();
     trial.pop();
-    match cfg.hints.for_prefix(&trial) {
+    match hints.for_prefix(&trial) {
         Some(mut it) => {
             let first = it.get().unwrap();
             let term = Term;
@@ -71,14 +74,16 @@ fn ac_bs<'a> (tr: TermReader<'a>, cfg: &'a TermCfg, keys: &[u8]) -> (bool, TermR
             (true, TermReader {
                 current: trial,
                 chint: Some(it),
-                args: tr.args
+                args: tr.args,
+                elsekey: tr.elsekey,
+                key_map: tr.key_map
             })
         },
         None => (true, tr)
     }
 }
 
-fn ac_space<'a> (tr: TermReader<'a>, _cfg: &'a TermCfg,  _: &[u8]) -> (bool,TermReader<'a>) {
+fn ac_space<'a> (tr: TermReader<'a>, _hints: &'a ShCommands,  _: &[u8]) -> (bool,TermReader<'a>) {
     if tr.args.len() > 0 {
         if tr.current.len() > 0 {
             return (true, tr.pushstr());
@@ -89,7 +94,7 @@ fn ac_space<'a> (tr: TermReader<'a>, _cfg: &'a TermCfg,  _: &[u8]) -> (bool,Term
     (true, tr.autocomplete())
 }
 
-fn ac_ret<'a> (tr: TermReader<'a>, _cfg: &'a TermCfg, _: &[u8]) -> (bool, TermReader<'a>) {
+fn ac_ret<'a> (tr: TermReader<'a>, _hints: &'a ShCommands, _: &[u8]) -> (bool, TermReader<'a>) {
     if tr.args.len() > 0 {
         if tr.current.len() > 0 {
             return (false, tr.pushstr());

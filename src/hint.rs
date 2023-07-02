@@ -107,12 +107,12 @@ impl<'a, T> ExcerptIter<'a, T> {
         }
     }
 
-//    pub fn next(&mut self) -> Option<&T> {
-//        self.get_offset(1)
-//    }
-//    pub fn prev(&mut self) -> Option<&T> {
-//        self.get_offset(-1)
-//    }
+    pub fn next(&mut self) -> Option<&T> {
+        self.get_offset(1)
+    }
+    pub fn prev(&mut self) -> Option<&T> {
+        self.get_offset(-1)
+    }
 }
 
 #[test]

@@ -4,8 +4,9 @@ use std::str;
 use std::collections::HashMap;
 
 use crate::hint::*;
+use crate::autocomp::*;
 
-type KAHandler = for <'a> fn(TermReader<'a>, &'a TermCfg, &[u8]) -> (bool, TermReader<'a>);
+type KAHandler = for <'a> fn(TermReader<'a>, &'a ShCommands, &[u8]) -> (bool, TermReader<'a>);
 
 #[derive(Clone,Copy)]
 pub enum KeyAction {
@@ -13,43 +14,31 @@ pub enum KeyAction {
 }
 
 impl KeyAction {
-    fn run<'a> (&self, tr: TermReader<'a>, cfg: &'a TermCfg, keys: &[u8]) -> (bool, TermReader<'a>) {
+    fn run<'a> (&self, tr: TermReader<'a>, hints: &'a ShCommands, keys: &[u8]) -> (bool, TermReader<'a>) {
         match self {
-            KeyAction::Action(x) => x(tr, cfg, keys)
+            KeyAction::Action(x) => x(tr, hints, keys)
         }
     }
 }
 
 type KeyBind = HashMap<u8,KeyAction>;
 
-pub struct TermCfg {
-    key_map : KeyBind,
-    elsekey : Option<KeyAction>,
-    pub hints : ShCommands,
-}
-
-impl TermCfg {
-    pub fn new(keys : KeyBind, elsekey : Option<KeyAction>) -> Self {
-        TermCfg {
-            key_map: keys,
-            elsekey: elsekey,
-            hints: ShCommands::new(),
-        }
-    }
-}
-
 pub struct TermReader<'a> {
     pub current : String,
     pub args : Vec<String>,
-    pub chint : Option<ExcerptIter<'a, String>>
+    pub chint : Option<ExcerptIter<'a, String>>,
+    pub key_map : KeyBind,
+    pub elsekey : Option<KeyAction>,
 }
 
 impl<'a> TermReader<'a> {
-    fn new() -> Self {
+    pub fn new(keys : KeyBind, elsekey : Option<KeyAction>) -> Self {
         TermReader {
             current: String::from(""),
             args: vec![],
-            chint: None
+            chint: None,
+            key_map: keys,
+            elsekey: elsekey
         }
     }
 
@@ -60,7 +49,9 @@ impl<'a> TermReader<'a> {
 
             TermReader{ current: String::from(""),
                         args: na,
-                        chint: self.chint }
+                        chint: self.chint,
+                        elsekey: self.elsekey,
+                        key_map: self.key_map}
         } else {
             self
         }
@@ -87,17 +78,18 @@ impl<'a> TermReader<'a> {
     }
 
     pub fn with_current(self, val : String) -> TermReader<'a> {
-        TermReader { current: val, args: self.args, chint: self.chint }
+        TermReader { current: val, args: self.args, chint: self.chint,
+                     key_map: self.key_map, elsekey: self.elsekey}
     }
 
-    pub fn accept<'b>(self, cfg : &'b TermCfg, keys : &[u8]) -> (bool, TermReader<'b>)
+    pub fn accept<'b>(self, hints : &'b ShCommands, keys : &[u8]) -> (bool, TermReader<'b>)
             where 'a : 'b {
-        if cfg.key_map.contains_key(&keys[0]) {
-            let x = cfg.key_map[&keys[0]];
-            x.run(self, cfg, keys)
+        if self.key_map.contains_key(&keys[0]) {
+            let x = self.key_map[&keys[0]];
+            x.run(self, hints, keys)
         } else {
-            match cfg.elsekey {
-                Some(x) => x.run(self, cfg, keys),
+            match self.elsekey {
+                Some(x) => x.run(self, hints, keys),
                 None => {
                     echo(keys);
                     let nc = self.current.clone() + str::from_utf8(keys).unwrap();
@@ -146,12 +138,13 @@ impl Drop for Term {
     }
 }
 
-pub fn reading(input : &mut dyn Read, cfg : TermCfg) -> Vec<String> {
+pub fn reading(input : &mut dyn Read) -> Vec<String> {
     let mut buff : [u8;10] = [0;10];
-    let mut tr = TermReader::new();
+    let hints = ShCommands::new();
+    let mut tr = default_term();
 
     while match input.read(&mut buff) {
-        Ok(len) => { let (cont, ntr) = tr.accept(&cfg, &buff[0..len]);
+        Ok(len) => { let (cont, ntr) = tr.accept(&hints, &buff[0..len]);
                      tr = ntr;
                      cont},
         Err(e) => {
