@@ -1,6 +1,5 @@
 use std::io::Read;
 use std::io::Write;
-use std::str;
 use std::collections::HashMap;
 
 use crate::hint::*;
@@ -21,7 +20,7 @@ impl KeyAction {
     }
 }
 
-type KeyBind = HashMap<u8,KeyAction>;
+pub type KeyBind = HashMap<u8,KeyAction>;
 
 pub struct TermReader<'a> {
     pub current : String,
@@ -92,8 +91,7 @@ impl<'a> TermReader<'a> {
                 Some(x) => x.run(self, hints, keys),
                 None => {
                     echo(keys);
-                    let nc = self.current.clone() + str::from_utf8(keys).unwrap();
-                    (true, self.with_current(nc))
+                    (true, self)
                 }
             }
         }
