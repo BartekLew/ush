@@ -107,9 +107,12 @@ impl<'a, T> ExcerptIter<'a, T> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn next(&mut self) -> Option<&T> {
         self.get_offset(1)
     }
+
+    #[allow(dead_code)]
     pub fn prev(&mut self) -> Option<&T> {
         self.get_offset(-1)
     }
