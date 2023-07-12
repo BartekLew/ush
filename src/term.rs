@@ -5,7 +5,35 @@ use std::collections::HashMap;
 use crate::hint::*;
 use crate::autocomp::*;
 
-type KAHandler = for <'a> fn(TermReader<'a>, &'a ShCommands, &[u8]) -> (bool, TermReader<'a>);
+pub struct Reading<'a> {
+    tbc : bool,
+    mode : TermReader<'a>,
+    output : Option<String>
+}
+
+impl <'a> Reading<'a> {
+    pub fn finished(mode: TermReader<'a>, output: Option<String>) -> Self {
+        Reading { mode: mode, tbc: false, output: output }
+    }
+
+    pub fn tbc(mode: TermReader<'a>, output: Option<String>) -> Self {
+        Reading { mode: mode, tbc: true, output: output }
+    }
+
+    pub fn commit<W: Write>(&self, out: &mut W) -> bool {
+        match &self.output {
+            Some(x) => {
+                out.write(x.as_bytes()).unwrap();
+                out.flush().unwrap();
+            },
+            None => {}
+        }
+
+        self.tbc
+    }
+}
+
+type KAHandler = for <'a> fn(TermReader<'a>, &'a ShCommands, &[u8]) -> Reading<'a>;
 
 #[derive(Clone,Copy)]
 pub enum KeyAction {
@@ -13,7 +41,7 @@ pub enum KeyAction {
 }
 
 impl KeyAction {
-    fn run<'a> (&self, tr: TermReader<'a>, hints: &'a ShCommands, keys: &[u8]) -> (bool, TermReader<'a>) {
+    fn run<'a> (&self, tr: TermReader<'a>, hints: &'a ShCommands, keys: &[u8]) -> Reading<'a> {
         match self {
             KeyAction::Action(x) => x(tr, hints, keys)
         }
@@ -23,16 +51,18 @@ impl KeyAction {
 pub type KeyBind = HashMap<u8,KeyAction>;
 
 pub struct TermReader<'a> {
+    pub output : String,
     pub current : String,
     pub args : Vec<String>,
     pub chint : Option<ExcerptIter<'a, String>>,
     pub key_map : KeyBind,
-    pub elsekey : Option<KeyAction>,
+    pub elsekey : KeyAction,
 }
 
 impl<'a> TermReader<'a> {
-    pub fn new(keys : KeyBind, elsekey : Option<KeyAction>) -> Self {
+    pub fn new(keys : KeyBind, elsekey : KeyAction) -> Self {
         TermReader {
+            output: String::from(""),
             current: String::from(""),
             args: vec![],
             chint: None,
@@ -46,7 +76,8 @@ impl<'a> TermReader<'a> {
             let mut na = self.args;
             na.push(self.current.clone());
 
-            TermReader{ current: String::from(""),
+            TermReader{ output: self.output,
+                        current: String::from(""),
                         args: na,
                         chint: self.chint,
                         elsekey: self.elsekey,
@@ -77,23 +108,18 @@ impl<'a> TermReader<'a> {
     }
 
     pub fn with_current(self, val : String) -> TermReader<'a> {
-        TermReader { current: val, args: self.args, chint: self.chint,
+        TermReader { output: self.output, current: val, args: self.args, chint: self.chint,
                      key_map: self.key_map, elsekey: self.elsekey}
     }
 
-    pub fn accept<'b>(self, hints : &'b ShCommands, keys : &[u8]) -> (bool, TermReader<'b>)
+    pub fn accept<'b>(self, hints : &'b ShCommands, keys : &[u8]) -> Reading<'b>
             where 'a : 'b {
         if self.key_map.contains_key(&keys[0]) {
             let x = self.key_map[&keys[0]];
             x.run(self, hints, keys)
         } else {
-            match self.elsekey {
-                Some(x) => x.run(self, hints, keys),
-                None => {
-                    echo(keys);
-                    (true, self)
-                }
-            }
+            let f = self.elsekey;
+            f.run(self, hints, keys)
         }
     }
 }
@@ -136,15 +162,16 @@ impl Drop for Term {
     }
 }
 
-pub fn reading(input : &mut dyn Read) -> Vec<String> {
+pub fn reading<W: Write>(input : &mut dyn Read, mut output: W) -> Vec<String> {
     let mut buff : [u8;10] = [0;10];
     let hints = ShCommands::new();
     let mut tr = default_term();
 
     while match input.read(&mut buff) {
-        Ok(len) => { let (cont, ntr) = tr.accept(&hints, &buff[0..len]);
-                     tr = ntr;
-                     cont},
+        Ok(len) => { let status = tr.accept(&hints, &buff[0..len]);
+                     status.commit(&mut output);
+                     tr = status.mode;
+                     status.tbc},
         Err(e) => {
             println!("ERROR: {}", e);
             false
