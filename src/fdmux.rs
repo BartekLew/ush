@@ -7,39 +7,24 @@ use std::io::Read;
 use std::io::Error;
 use std::io::ErrorKind;
 
-#[allow(dead_code)]
-pub enum Action { Read, Write }
-
-impl Action {
-    fn poll_flag(&self) -> c_short {
-        match self {
-            Action::Read => libc::POLLIN,
-            Action::Write => libc::POLLOUT
-        }
-    }
-
-    #[allow(dead_code)]
-    fn open_flag(&self) -> c_int {
-        match self {
-            Action::Read => libc::O_RDONLY,
-            Action::Write => libc::O_WRONLY
-        }
-    }
-}
+pub trait Muxable:AsRawFd+Read {}
 
 pub struct FdMux {
-    pub fds : Vec<pollfd>
+    inputs : Vec<Box<dyn Muxable>>,
+    fds: Vec<pollfd>
 }
 
 impl FdMux {
     pub fn new(size : usize) -> Self {
-        FdMux { fds: Vec::with_capacity(size) }
+        FdMux { inputs: Vec::with_capacity(size),
+                fds: Vec::with_capacity(size) }
     }
 
-    pub fn add<T: AsRawFd>(mut self, src: &T, mode: Action) -> FdMux {
-        self.fds.push(pollfd { fd: src.as_raw_fd(),
-                               events: mode.poll_flag(),
+    pub fn add(mut self, src: Box<dyn Muxable>) -> FdMux {
+        self.fds.push(pollfd { fd: (*src).as_raw_fd(),
+                               events: POLLIN,
                                revents: 0 });
+        self.inputs.push(src);
         self
     }
 }
@@ -49,18 +34,12 @@ impl Read for FdMux {
         println!("pollset");
         let ret = unsafe { poll(self.fds.as_mut_ptr(), self.fds.len() as u64, -1) };
         if ret > 0 {
-            for desc in &self.fds {
+            let len = self.fds.len();
+            for i in 0..len {
+                let desc = self.fds[i];
                 println!("{} {} {}", desc.fd, desc.events, desc.revents);
                 if desc.revents & desc.events > 0 {
-                    unsafe {
-                        let len = read(desc.fd, buff.as_mut_ptr() as *mut c_void, buff.len());
-                        if len > 0 {
-                            return Ok(len as usize);
-                        } else {
-                            return Err(Error::new(ErrorKind::Other,
-                                                  format!("Can't read on fd {}", desc.fd)));
-                        }
-                    }
+                    return self.inputs[i].read(buff);
                 }
             }
         }
@@ -115,3 +94,6 @@ impl Drop for NamedReadPipe {
 impl AsRawFd for NamedReadPipe {
     fn as_raw_fd(&self) -> RawFd { self.fd }
 }
+
+impl Muxable for std::io::Stdin {}
+impl Muxable for NamedReadPipe {}

@@ -27,8 +27,8 @@ fn main() {
 
     let inpipe = NamedReadPipe::new("/tmp/ush".to_string()).unwrap();
     let mut inmux = FdMux::new(2)
-                          .add(&input, Action::Read)
-                          .add(&inpipe, Action::Read);
+                          .add(Box::new(input))
+                          .add(Box::new(inpipe));
 
     let mut tos = Termios::from_fd(ifd).expect("This program can't be piped");
     tos.c_lflag &= !(ECHO | ICANON);
