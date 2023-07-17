@@ -1,14 +1,14 @@
-use std::io::Read;
 use std::io::Write;
 use std::collections::HashMap;
 
 use crate::autocomp::*;
 use crate::hint::*;
+use crate::fdmux::*;
 
 pub struct Reading<T:DefaultVal> {
-    tbc : bool,
-    mode : TermReader<T>,
-    output : Option<String>
+    pub tbc : bool,
+    pub mode : TermReader<T>,
+    pub output : Option<String>
 }
 
 impl <T:DefaultVal> Reading<T> {
@@ -132,16 +132,15 @@ impl Drop for Term {
     }
 }
 
-pub fn reading<W: Write>(input : &mut dyn Read, mut output: W) -> Vec<String> {
-    let mut buff : [u8;10] = [0;10];
+pub fn reading<W: Write>(input : &mut dyn ReadStr, mut output: W) -> Vec<String> {
     let hints = ShCommands::new();
     let mut tr = default_term(&hints);
 
-    while match input.read(&mut buff) {
-        Ok(len) => { let status = tr.accept(&buff[0..len]);
-                     status.commit(&mut output);
-                     tr = status.mode;
-                     status.tbc},
+    while match input.read_str() {
+        Ok(s) => { let status = tr.accept(s.as_bytes());
+                   status.commit(&mut output);
+                   tr = status.mode;
+                   status.tbc},
         Err(e) => {
             println!("ERROR: {}", e);
             false

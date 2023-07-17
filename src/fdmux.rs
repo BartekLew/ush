@@ -7,7 +7,11 @@ use std::io::Read;
 use std::io::Error;
 use std::io::ErrorKind;
 
-pub trait Muxable:AsRawFd+Read {}
+pub trait ReadStr {
+    fn read_str(&mut self) -> Result<String, Error>;
+}
+
+pub trait Muxable:AsRawFd+ReadStr {}
 
 pub struct FdMux {
     inputs : Vec<Box<dyn Muxable>>,
@@ -29,17 +33,15 @@ impl FdMux {
     }
 }
 
-impl Read for FdMux {
-    fn read(&mut self, buff: &mut [u8]) -> Result<usize, Error> {
-        println!("pollset");
+impl ReadStr for FdMux {
+    fn read_str(&mut self) -> Result<String,Error> {
         let ret = unsafe { poll(self.fds.as_mut_ptr(), self.fds.len() as u64, -1) };
         if ret > 0 {
             let len = self.fds.len();
             for i in 0..len {
                 let desc = self.fds[i];
-                println!("{} {} {}", desc.fd, desc.events, desc.revents);
                 if desc.revents & desc.events > 0 {
-                    return self.inputs[i].read(buff);
+                    return self.inputs[i].read_str();
                 }
             }
         }
@@ -62,7 +64,6 @@ impl NamedReadPipe {
                 // I use RDWR, because opening in O_RDONLY would block
                 // on open until someone open another end of pipe.
                 let fd = open(name.as_ptr() as *const i8, O_RDWR);
-                println!("{}", fd);
                 if fd > 0 {
                     return Ok(NamedReadPipe{fd: fd, name: name});
                 }
@@ -73,14 +74,25 @@ impl NamedReadPipe {
     }
 }
 
-impl Read for NamedReadPipe {
-    fn read(&mut self, buff: &mut [u8]) -> Result<usize, Error> {
+impl ReadStr for NamedReadPipe {
+    fn read_str(&mut self) -> Result<String, Error> {
+        let mut buff: [u8;1024] = [0;1024];
         unsafe {
             let n = read(self.fd, buff.as_mut_ptr() as *mut c_void, buff.len());
             if n > 0 {
-                return Ok(n as usize);
+                return Ok(String::from(std::str::from_utf8(&buff[0..n as usize]).unwrap()));
             }
             return Err(Error::new(ErrorKind::UnexpectedEof, "Can't read named pipe"));
+        }
+    }
+}
+
+impl ReadStr for std::io::Stdin {
+    fn read_str(&mut self) -> Result<String, Error> {
+        let mut buff: [u8; 10] = [0;10];
+        match self.read(&mut buff) {
+            Ok(n) => Ok(String::from(std::str::from_utf8(&buff[0..n]).unwrap())),
+            Err(e) => Err(e)
         }
     }
 }
@@ -97,3 +109,4 @@ impl AsRawFd for NamedReadPipe {
 
 impl Muxable for std::io::Stdin {}
 impl Muxable for NamedReadPipe {}
+
