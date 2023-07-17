@@ -5,19 +5,18 @@ use crate::autocomp::*;
 use crate::hint::*;
 use crate::fdmux::*;
 
-pub struct Reading<T:DefaultVal> {
+pub struct Reading {
     pub tbc : bool,
-    pub mode : TermReader<T>,
     pub output : Option<String>
 }
 
-impl <T:DefaultVal> Reading<T> {
-    pub fn finished(mode: TermReader<T>, output: Option<String>) -> Self {
-        Reading { mode: mode, tbc: false, output: output }
+impl Reading {
+    pub fn finished(output: Option<String>) -> Self {
+        Reading { tbc: false, output: output }
     }
 
-    pub fn tbc(mode: TermReader<T>, output: Option<String>) -> Self {
-        Reading { mode: mode, tbc: true, output: output }
+    pub fn tbc(output: Option<String>) -> Self {
+        Reading { tbc: true, output: output }
     }
 
     pub fn commit<W: Write>(&self, out: &mut W) -> bool {
@@ -33,7 +32,7 @@ impl <T:DefaultVal> Reading<T> {
     }
 }
 
-type KAHandler<T> = fn(TermReader<T>, &[u8]) -> Reading<T>;
+type KAHandler<T> = fn(&mut TermReader<T>, &[u8]) -> Reading;
 
 pub enum KeyAction<T:DefaultVal> {
     Action(KAHandler<T>),
@@ -47,7 +46,7 @@ impl<T:DefaultVal> Clone for KeyAction<T> {
 }
 
 impl<T:DefaultVal> KeyAction<T> {
-    fn run (&self, tr: TermReader<T>, keys: &[u8]) -> Reading<T> {
+    fn run (&self, tr: &mut TermReader<T>, keys: &[u8]) -> Reading {
         match self {
             KeyAction::Action(x) => x(tr, keys)
         }
@@ -75,15 +74,12 @@ impl<T:DefaultVal> TermReader<T> {
         }
     }
 
-    pub fn with_ctx<F: Fn(T)->T>(self, chg: F) -> TermReader<T> {
-        TermReader { ctx: chg(self.ctx), key_map: self.key_map, elsekey: self.elsekey }
+    pub fn set_mapping(&mut self, keys: KeyBind<T>, elsekey: KeyAction<T>) {
+        self.key_map = keys;
+        self.elsekey = elsekey;
     }
 
-    pub fn with_mapping(self, keys: KeyBind<T>, elsekey: KeyAction<T>) -> TermReader<T> {
-        TermReader { ctx: self.ctx, key_map: keys, elsekey: elsekey }
-    }
-
-    pub fn accept(self, keys : &[u8]) -> Reading<T> {
+    pub fn accept(&mut self, keys : &[u8]) -> Reading {
         if self.key_map.contains_key(&keys[0]) {
             let x = self.key_map[&keys[0]];
             x.run(self, keys)
@@ -139,7 +135,6 @@ pub fn reading<W: Write>(input : &mut dyn ReadStr, mut output: W) -> Vec<String>
     while match input.read_str() {
         Ok(s) => { let status = tr.accept(s.as_bytes());
                    status.commit(&mut output);
-                   tr = status.mode;
                    status.tbc},
         Err(e) => {
             println!("ERROR: {}", e);

@@ -29,15 +29,14 @@ impl<'a> TermCtx<'a> {
         }
     }
 
-    pub fn pushstr(mut self) -> TermCtx<'a> {
+    pub fn pushstr(&mut self) {
         if self.current.len() > 0 {
             self.args.push(self.current.clone());
             self.current = String::from("");
         }
-        self
     }
 
-    pub fn autocomplete(mut self) -> TermCtx<'a> {
+    pub fn autocomplete(&mut self) {
         if self.current.len() > 0 {
             match &self.chint {
                 Some(ch) => {
@@ -45,15 +44,13 @@ impl<'a> TermCtx<'a> {
                         Some(chint) => {
                             Term.hmove((chint.len() - self.current.len() + 1) as i32);
                             self.current = chint.to_string();
-                            self.pushstr()
+                            self.pushstr();
                         },
-                        None => self
+                        None => ()
                     }
                 },
-                None => self
+                None => ()
             }
-        } else {
-            self
         }
     }
 }
@@ -81,34 +78,29 @@ pub fn default_term<'a>(hints: &'a ShCommands) -> MyReader<'a> {
                   initial_keys(), KeyAction::Action(out_elsekey))
 }
 
-fn enter_cmd<'a>(tr: MyReader<'a>, _keys: &[u8]) -> Reading<TermCtx<'a>> {
-    Reading::tbc(tr.with_mapping(more_keys(), KeyAction::Action(cmd_elsekey)), None)
+fn enter_cmd<'a>(tr: &mut MyReader<'a>, _keys: &[u8]) -> Reading {
+    tr.set_mapping(more_keys(), KeyAction::Action(cmd_elsekey));
+    Reading::tbc(None)
 }
 
-fn send_output<'a>(tr: MyReader<'a>, _keys: &[u8]) -> Reading<TermCtx<'a>> {
-    let mut out = tr.ctx.output;
+fn send_output<'a>(tr: &mut MyReader<'a>, _keys: &[u8]) -> Reading {
+    let mut out = tr.ctx.output.clone();
     out.push_str("\n");
     Term.echo(b"\n");
-    Reading::tbc(TermReader{ ctx: TermCtx {
-                                output: String::from(""),
-                                current: tr.ctx.current,
-                                hints: tr.ctx.hints,
-                                chint: tr.ctx.chint,
-                                args: tr.ctx.args
-                             },
-                             key_map: tr.key_map, elsekey: tr.elsekey },
-                 Some(out))
+    tr.ctx.output = String::from("");
+    Reading::tbc(Some(out))
 }
 
-fn quit_cmd<'a>(tr: MyReader<'a>, _keys: &[u8]) -> Reading<TermCtx<'a>> {
-    Reading::tbc(tr.with_mapping(initial_keys(), KeyAction::Action(out_elsekey)), None)
+fn quit_cmd<'a>(tr: &mut MyReader<'a>, _keys: &[u8]) -> Reading {
+    tr.set_mapping(initial_keys(), KeyAction::Action(out_elsekey));
+    Reading::tbc(None)
 }
 
-fn cmd_elsekey<'a> (mut tr: MyReader<'a>, keys: &[u8]) -> Reading<TermCtx<'a>> {
+fn cmd_elsekey<'a> (tr: &mut MyReader<'a>, keys: &[u8]) -> Reading {
     if tr.ctx.args.len() > 0 {
         echo(keys);
         tr.ctx.current.push_str(str::from_utf8(keys).unwrap());
-        return Reading::tbc(tr, None)
+        return Reading::tbc(None)
     }
 
     let trial = tr.ctx.current.clone() + str::from_utf8(keys).unwrap();
@@ -123,43 +115,35 @@ fn cmd_elsekey<'a> (mut tr: MyReader<'a>, keys: &[u8]) -> Reading<TermCtx<'a>> {
                 }, None => ()
             }
     
-            Reading::tbc(TermReader {
-                    ctx: TermCtx {
-                        output: tr.ctx.output,
-                        current: trial,
-                        chint: Some(it),
-                        args: tr.ctx.args,
-                        hints: tr.ctx.hints
-                    },
-                    key_map: tr.key_map,
-                    elsekey: tr.elsekey
-                }, None)
+            tr.ctx.current = trial;
+            tr.ctx.chint = Some(it);
+            Reading::tbc(None)
         },
-        None => Reading::tbc(tr, None)
+        None => Reading::tbc(None)
     }
 }
 
-fn out_elsekey<'a>(mut tr: MyReader<'a>, keys: &[u8]) -> Reading<TermCtx<'a>> {
+fn out_elsekey<'a>(tr: &mut MyReader<'a>, keys: &[u8]) -> Reading {
     echo(keys);
     tr.ctx.output.push_str(str::from_utf8(keys).unwrap());
-    Reading::tbc(tr, None)
+    Reading::tbc(None)
 }
 
-fn ac_min_bs<'a> (mut tr: MyReader<'a>, _keys: &[u8]) -> Reading<TermCtx<'a>> {
+fn ac_min_bs<'a> (tr: &mut MyReader<'a>, _keys: &[u8]) -> Reading {
     Term.hmove(-1);
     tr.ctx.output.pop();
-    Reading::tbc(tr, None)
+    Reading::tbc(None)
 }
 
-fn ac_bs<'a> (mut tr: MyReader<'a>, _keys: &[u8]) -> Reading<TermCtx<'a>> {
+fn ac_bs<'a> (tr: &mut MyReader<'a>, _keys: &[u8]) -> Reading {
     if tr.ctx.args.len() > 0 {
         Term.hmove(-1);
         tr.ctx.current.pop();
-        return Reading::tbc(tr, None)
+        return Reading::tbc(None)
     }
 
     if tr.ctx.current.len() == 0 {
-        return Reading::tbc(tr, None);
+        return Reading::tbc(None);
     }
 
     let mut trial = tr.ctx.current.clone();
@@ -175,45 +159,41 @@ fn ac_bs<'a> (mut tr: MyReader<'a>, _keys: &[u8]) -> Reading<TermCtx<'a>> {
                                  .hmove(-(s.len() as i32)); }
                 None => ()
             }
-    
-            Reading::tbc(TermReader {
-                    ctx: TermCtx {
-                        output: tr.ctx.output,
-                        current: trial,
-                        chint: Some(it),
-                        args: tr.ctx.args,
-                        hints: tr.ctx.hints
-                    },
-                    elsekey: tr.elsekey,
-                    key_map: tr.key_map
-                }, None)
+   
+            tr.ctx.current = trial;
+            tr.ctx.chint = Some(it);
+            Reading::tbc(None)
         },
-        None => Reading::tbc(tr, None)
+        None => Reading::tbc(None)
     }
 }
 
-fn ac_space<'a> (tr: MyReader<'a>, keys: &[u8]) -> Reading<TermCtx<'a>> {
+fn ac_space<'a> (tr: &mut MyReader<'a>, keys: &[u8]) -> Reading {
     if tr.ctx.args.len() > 0 {
         if tr.ctx.current.len() > 0 {
             echo(keys);
-            return Reading::tbc(tr.with_ctx(&|ctx:TermCtx<'a>| ctx.pushstr()), None);
+            tr.ctx.pushstr();
+            return Reading::tbc(None);
         }
-        return Reading::tbc(tr, None)
+        return Reading::tbc(None)
     }
 
-    Reading::tbc(tr.with_ctx(|ctx| ctx.autocomplete()), None)
+    tr.ctx.autocomplete();
+    Reading::tbc(None)
 }
 
-fn ac_ret<'a> (tr: MyReader<'a>, _: &[u8]) -> Reading<TermCtx<'a>> {
+fn ac_ret<'a> (tr: &mut MyReader<'a>, _: &[u8]) -> Reading {
     if tr.ctx.args.len() > 0 {
         if tr.ctx.current.len() > 0 {
-            return Reading::finished(tr.with_ctx(|ctx| ctx.pushstr()), None);
+            tr.ctx.pushstr();
+            return Reading::finished(None);
         }
-        return Reading::finished(tr, None)
+        return Reading::finished(None)
     }
 
     Term.echo(b"\n");
-
-    Reading::finished(tr.with_ctx(|ctx| ctx.autocomplete()), None)
+    
+    tr.ctx.autocomplete();
+    Reading::finished(None)
 }
 
