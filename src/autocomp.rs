@@ -13,8 +13,8 @@ pub struct TermCtx<'a> {
 }
 
 impl<'a> DefaultVal for TermCtx<'a> {
-    fn val(self) -> Vec<String> {
-        self.args
+    fn val(&self) -> &Vec<String> {
+        &self.args
     }
 }
 
@@ -73,7 +73,8 @@ fn initial_keys<'a>() -> KeyBind<TermCtx<'a>> {
 
 pub type MyReader<'a> = TermReader<TermCtx<'a>>;
 
-pub fn default_term<'a>(hints: &'a ShCommands) -> MyReader<'a> {
+pub fn default_term<'a,'b>(hints: &'b ShCommands) -> MyReader<'a>
+        where 'b:'a {
     MyReader::new(TermCtx::new(hints),
                   initial_keys(), KeyAction::Action(out_elsekey))
 }

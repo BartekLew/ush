@@ -7,6 +7,7 @@ mod term;
 mod autocomp;
 mod fdmux;
 use crate::term::*;
+use crate::hint::*;
 use crate::fdmux::*;
 
 fn main() {
@@ -25,20 +26,22 @@ fn main() {
     let input = std::io::stdin();
     let ifd = input.as_raw_fd();
 
-    let inpipe = NamedReadPipe::new("/tmp/ush".to_string()).unwrap();
-    let mut inmux = FdMux::new(2)
-                          .add(Box::new(input))
-                          .add(Box::new(inpipe));
-
     let mut tos = Termios::from_fd(ifd).expect("This program can't be piped");
     tos.c_lflag &= !(ECHO | ICANON);
     tcsetattr(ifd, TCSAFLUSH, &tos).unwrap();
 
-    let ans = match output {
-        Some(o) => reading(&mut inmux, o),
-        None => reading(&mut inmux, std::io::stdout())
+    let mut inpipe = NamedReadPipe::new("/tmp/ush".to_string()).unwrap();
+
+    let hints = ShCommands::new();
+    let mut cmdpipe = TermProc::new(input, &hints);
+    let inmux = FdMux::new(2)
+                      .add(&mut cmdpipe)
+                      .add(&mut inpipe);
+                      
+    match output {
+        Some(o) => inmux.pass_to(o),
+        None => inmux.pass_to(std::io::stdout())
     };
-    println!("{}", ans.join(","));
 
     tos.c_lflag |= ECHO | ICANON;
     tcsetattr(ifd, TCSAFLUSH, &tos).unwrap();

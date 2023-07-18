@@ -1,5 +1,8 @@
 use std::io::Write;
+use std::io::Error;
 use std::collections::HashMap;
+use std::os::unix::prelude::AsRawFd;
+use std::os::unix::prelude::RawFd;
 
 use crate::autocomp::*;
 use crate::hint::*;
@@ -17,18 +20,6 @@ impl Reading {
 
     pub fn tbc(output: Option<String>) -> Self {
         Reading { tbc: true, output: output }
-    }
-
-    pub fn commit<W: Write>(&self, out: &mut W) -> bool {
-        match &self.output {
-            Some(x) => {
-                out.write(x.as_bytes()).unwrap();
-                out.flush().unwrap();
-            },
-            None => {}
-        }
-
-        self.tbc
     }
 }
 
@@ -56,7 +47,7 @@ impl<T:DefaultVal> KeyAction<T> {
 pub type KeyBind<T> = HashMap<u8,KeyAction<T>>;
 
 pub trait DefaultVal {
-    fn val(self) -> Vec<String>;
+    fn val(&self) -> &Vec<String>;
 }
 
 pub struct TermReader<T:DefaultVal> {
@@ -128,19 +119,35 @@ impl Drop for Term {
     }
 }
 
-pub fn reading<W: Write>(input : &mut dyn ReadStr, mut output: W) -> Vec<String> {
-    let hints = ShCommands::new();
-    let mut tr = default_term(&hints);
-
-    while match input.read_str() {
-        Ok(s) => { let status = tr.accept(s.as_bytes());
-                   status.commit(&mut output);
-                   status.tbc},
-        Err(e) => {
-            println!("ERROR: {}", e);
-            false
-        }
-    } {}
-
-    tr.ctx.val()
+pub struct TermProc<'a,T:Muxable> {
+    input: T,
+    tr: TermReader<TermCtx<'a>>
 }
+
+impl <'a, T:Muxable> TermProc<'a,T> {
+    pub fn new(input: T, hints: &'a ShCommands) -> Self {
+        TermProc { input: input, tr: default_term(hints) }
+    }
+}
+
+impl <'a, T:Muxable> AsRawFd for TermProc<'a,T> {
+    fn as_raw_fd(&self) -> RawFd { self.input.as_raw_fd() }
+}
+
+impl <'a, T:Muxable> ReadStr for TermProc<'a,T> {
+    fn read_str(&mut self) -> Result<String, Error> {
+        match self.input.read_str() {
+            Ok(s) => { let status = self.tr.accept(s.as_bytes());
+                       if !status.tbc {
+                            println!("{:?}", self.tr.ctx.val());
+                            self.tr = default_term(self.tr.ctx.hints);
+                       }
+                       Ok(status.output.unwrap_or(String::from("")))
+                     },
+            Err(e) => Err(e)
+        }
+    }
+}
+
+impl <'a, T:Muxable> Muxable for TermProc<'a, T> {}
+

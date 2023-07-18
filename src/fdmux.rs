@@ -4,6 +4,7 @@ use libc::*;
 use std::os::unix::prelude::AsRawFd;
 use std::os::unix::prelude::RawFd;
 use std::io::Read;
+use std::io::Write;
 use std::io::Error;
 use std::io::ErrorKind;
 
@@ -13,27 +14,40 @@ pub trait ReadStr {
 
 pub trait Muxable:AsRawFd+ReadStr {}
 
-pub struct FdMux {
-    inputs : Vec<Box<dyn Muxable>>,
+pub struct FdMux<'a> {
+    inputs : Vec<&'a mut dyn Muxable>,
     fds: Vec<pollfd>
 }
 
-impl FdMux {
+impl <'a> FdMux <'a> {
     pub fn new(size : usize) -> Self {
         FdMux { inputs: Vec::with_capacity(size),
                 fds: Vec::with_capacity(size) }
     }
 
-    pub fn add(mut self, src: Box<dyn Muxable>) -> FdMux {
-        self.fds.push(pollfd { fd: (*src).as_raw_fd(),
+    pub fn add<M:Muxable>(mut self, src: &'a mut M) -> FdMux<'a> {
+        self.fds.push(pollfd { fd: src.as_raw_fd(),
                                events: POLLIN,
                                revents: 0 });
         self.inputs.push(src);
         self
     }
+
+    pub fn pass_to<W:Write>(mut self, mut out: W) {
+        loop {
+            match self.read_str() {
+                Ok(s) => {
+                    if s.len() > 0 {
+                        out.write(s.as_bytes()).unwrap();
+                        out.flush().unwrap();
+                    }
+                }, Err(_) => {return ();}
+            }
+        }
+    }
 }
 
-impl ReadStr for FdMux {
+impl <'a> ReadStr for FdMux<'a> {
     fn read_str(&mut self) -> Result<String,Error> {
         let ret = unsafe { poll(self.fds.as_mut_ptr(), self.fds.len() as u64, -1) };
         if ret > 0 {
