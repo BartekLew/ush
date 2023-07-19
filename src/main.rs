@@ -1,5 +1,3 @@
-use termios::*;
-use std::os::unix::io::AsRawFd;
 use std::process::{Command, Stdio, Child};
 
 mod hint;
@@ -38,19 +36,12 @@ fn main() {
                          .expect("can't run command")
         });
 
-    let input = std::io::stdin();
-    let ifd = input.as_raw_fd();
-
-    let mut tos = Termios::from_fd(ifd).expect("This program can't be piped");
-    tos.c_lflag &= !(ECHO | ICANON);
-    tcsetattr(ifd, TCSAFLUSH, &tos).unwrap();
-
     let mut inpipe = EchoPipe{
                         input: NamedReadPipe::new("/tmp/ush".to_string())
                                              .unwrap() };
 
     let hints = ShCommands::new();
-    let mut cmdpipe = TermProc::new(input, &hints);
+    let mut cmdpipe = TermProc::new(StdinReadKey::new(), &hints);
     let mut inmux = FdMux::new(2)
                       .add(&mut cmdpipe)
                       .add(&mut inpipe);
@@ -59,7 +50,4 @@ fn main() {
         Some(o) => o.consume(inmux),
         None => inmux.pass_to(std::io::stdout())
     };
-
-    tos.c_lflag |= ECHO | ICANON;
-    tcsetattr(ifd, TCSAFLUSH, &tos).unwrap();
 }

@@ -1,10 +1,13 @@
 extern crate libc;
+extern crate termios;
 
-use libc::*;
+use libc::{poll,pollfd,POLLIN,read,unlink,close,mkfifo,open,O_RDWR,c_void};
+use termios::*;
 use std::os::unix::prelude::AsRawFd;
 use std::os::unix::prelude::RawFd;
 use std::io::Read;
 use std::io::Write;
+use std::io::Stdin;
 
 #[derive(Debug)]
 pub enum StreamEvent {
@@ -151,3 +154,39 @@ impl<I:Muxable> ReadStr for EchoPipe<I> {
     }
 }
 impl<I: Muxable> Muxable for EchoPipe<I> {}
+
+pub struct StdinReadKey {
+    tos: Termios,
+    handle: Stdin
+}
+
+impl StdinReadKey {
+    pub fn new() -> Self {
+        let handle = std::io::stdin();
+        let mut tos = Termios::from_fd(handle.as_raw_fd())
+                              .expect("This program can't be piped");
+        tos.c_lflag &= !(ECHO | ICANON);
+        tcsetattr(handle.as_raw_fd(), TCSAFLUSH, &tos).unwrap();
+
+        StdinReadKey { tos: tos, handle: handle }
+    }
+}
+
+impl AsRawFd for StdinReadKey {
+    fn as_raw_fd(&self) -> RawFd { self.handle.as_raw_fd() }
+}
+
+impl ReadStr for StdinReadKey {
+    fn read_str(&mut self) -> Result<String, StreamEvent> {
+        self.handle.read_str()  
+    }
+}
+
+impl Muxable for StdinReadKey {}
+
+impl Drop for StdinReadKey {
+    fn drop(&mut self) {
+        self.tos.c_lflag |= ECHO | ICANON;
+        tcsetattr(self.as_raw_fd(), TCSAFLUSH, &self.tos).unwrap();
+    }
+}
