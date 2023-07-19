@@ -30,7 +30,9 @@ fn main() {
     tos.c_lflag &= !(ECHO | ICANON);
     tcsetattr(ifd, TCSAFLUSH, &tos).unwrap();
 
-    let mut inpipe = NamedReadPipe::new("/tmp/ush".to_string()).unwrap();
+    let mut inpipe = EchoPipe{
+                        input: NamedReadPipe::new("/tmp/ush".to_string())
+                                             .unwrap() };
 
     let hints = ShCommands::new();
     let mut cmdpipe = TermProc::new(input, &hints);

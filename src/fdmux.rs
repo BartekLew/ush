@@ -124,3 +124,20 @@ impl AsRawFd for NamedReadPipe {
 impl Muxable for std::io::Stdin {}
 impl Muxable for NamedReadPipe {}
 
+pub struct EchoPipe <I: Muxable> {
+    pub input: I
+}
+
+impl<I:Muxable> AsRawFd for EchoPipe<I> {
+    fn as_raw_fd(&self) -> RawFd { self.input.as_raw_fd() }
+}
+
+impl<I:Muxable> ReadStr for EchoPipe<I> {
+    fn read_str(&mut self) -> Result<String,Error> {
+        self.input.read_str().map(|s| {
+                                print!("{}", s);
+                                s
+                            })
+    }
+}
+impl<I: Muxable> Muxable for EchoPipe<I> {}
