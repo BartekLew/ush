@@ -1,13 +1,13 @@
 extern crate libc;
 extern crate termios;
 
-use libc::{poll,pollfd,POLLIN,read,unlink,close,mkfifo,open,O_RDWR,c_void};
+use libc::{poll,pollfd,POLLIN,read,unlink,close,mkfifo,
+           open,O_RDWR,c_void,posix_openpt, O_NOCTTY,
+           grantpt, unlockpt, ptsname, fork, setsid,
+           dup2, execvp, write, perror };
 use termios::*;
-use std::os::unix::prelude::AsRawFd;
-use std::os::unix::prelude::RawFd;
-use std::io::Read;
-use std::io::Write;
-use std::io::Stdin;
+use std::os::unix::prelude::{RawFd, AsRawFd};
+use std::io::{Error,ErrorKind, Stdin, Write, Read};
 
 #[derive(Debug)]
 pub enum StreamEvent {
@@ -190,3 +190,110 @@ impl Drop for StdinReadKey {
         tcsetattr(self.as_raw_fd(), TCSAFLUSH, &self.tos).unwrap();
     }
 }
+
+pub trait PipeConsumer {
+    fn consume(self, input: FdMux);
+}
+
+pub struct IOPipe {
+    fd: RawFd
+}
+
+impl IOPipe {
+    pub fn new(fd: RawFd) -> Self {
+        IOPipe { fd: fd }
+    }
+}
+
+impl AsRawFd for IOPipe {
+    fn as_raw_fd(&self) -> RawFd { self.fd }
+}
+
+impl ReadStr for IOPipe {
+    fn read_str(&mut self) -> Result<String, StreamEvent> {
+        let mut buff: [u8;1024] = [0;1024];
+        let n = unsafe { read(self.fd, buff.as_mut_ptr() as *mut c_void, 1024) };
+        match n > 0 {
+            true => Ok(String::from(std::str::from_utf8(&buff[0..n as usize]).unwrap())),
+            false => Err(StreamEvent::Error("can't read IOPipe".to_string()))
+        }
+    }
+}
+
+impl PipeConsumer for IOPipe {
+    fn consume(self, mut input: FdMux) {
+        input.pass_to(self);
+    }
+}
+
+impl Write for IOPipe {
+    fn write(&mut self, buff: &[u8]) -> Result<usize, Error> {
+        let n = unsafe { write(self.fd, buff.as_ptr() as *const c_void, buff.len()) };
+        if n > 0 {
+            Ok(n as usize)
+        } else {
+            Err(Error::new(ErrorKind::Other, "Can't read IOPipe"))
+        }
+    }
+
+    fn flush(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+pub struct Pty {
+    host: IOPipe,
+    guest: IOPipe
+}
+
+impl Pty {
+    pub fn new() -> Option<Self> {
+        unsafe {
+            let host = posix_openpt(O_RDWR | O_NOCTTY);
+            if host > 0 && grantpt(host) == 0 && unlockpt(host) == 0 {
+                let guestname = ptsname(host);
+                if guestname as usize > 0 {
+                    let guest = open(guestname, O_RDWR);
+                    if guest > 0 {
+                        return Some(Pty { host: IOPipe::new(host),
+                                          guest: IOPipe::new(guest) });
+                    }
+                }
+            }
+            return None;
+        }
+    }
+
+    pub fn spawn_output(self, command: String, args: Vec<String>) -> Result<IOPipe, String> {
+        let pid = unsafe { fork() };
+        if pid < 0 { return Err("Can't fork()".to_string()); }
+
+        if pid > 0 {
+            unsafe { close(self.guest.fd) };
+            return Ok(IOPipe::new(self.host.fd));
+        }
+
+        unsafe {
+            close(self.host.fd);
+
+            setsid();
+            dup2(self.guest.fd, 0);
+
+            // skip outputs
+            //dup2(self.guest.fd, 1);
+            //dup2(self.guest.fd, 2);
+
+            close(self.guest.fd);
+
+            let mut cargs : Vec<*const i8> =
+                args.iter().map(|str| str.as_ptr() as *const i8)
+                           .collect();
+            cargs.push(0 as *const i8);
+
+            execvp(command.as_ptr() as *const i8, cargs.as_ptr() as *const *const i8);
+
+            return Err("execvp() returned!".to_string());
+        }
+    }
+}
+
