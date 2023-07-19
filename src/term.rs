@@ -1,5 +1,4 @@
 use std::io::Write;
-use std::io::Error;
 use std::collections::HashMap;
 use std::os::unix::prelude::AsRawFd;
 use std::os::unix::prelude::RawFd;
@@ -135,7 +134,7 @@ impl <'a, T:Muxable> AsRawFd for TermProc<'a,T> {
 }
 
 impl <'a, T:Muxable> ReadStr for TermProc<'a,T> {
-    fn read_str(&mut self) -> Result<String, Error> {
+    fn read_str(&mut self) -> Result<String, StreamEvent> {
         match self.input.read_str() {
             Ok(s) => { let status = self.tr.accept(s.as_bytes());
                        if !status.tbc {

@@ -5,11 +5,14 @@ use std::os::unix::prelude::AsRawFd;
 use std::os::unix::prelude::RawFd;
 use std::io::Read;
 use std::io::Write;
-use std::io::Error;
-use std::io::ErrorKind;
+
+#[derive(Debug)]
+pub enum StreamEvent {
+    Eof, Error(String)
+}
 
 pub trait ReadStr {
-    fn read_str(&mut self) -> Result<String, Error>;
+    fn read_str(&mut self) -> Result<String, StreamEvent>;
 }
 
 pub trait Muxable:AsRawFd+ReadStr {}
@@ -33,7 +36,7 @@ impl <'a> FdMux <'a> {
         self
     }
 
-    pub fn pass_to<W:Write>(mut self, mut out: W) {
+    pub fn pass_to<W:Write>(&mut self, mut out: W) {
         loop {
             match self.read_str() {
                 Ok(s) => {
@@ -41,14 +44,21 @@ impl <'a> FdMux <'a> {
                         out.write(s.as_bytes()).unwrap();
                         out.flush().unwrap();
                     }
-                }, Err(_) => {return ();}
+                },
+                Err(StreamEvent::Error(s)) => {
+                    println!("Error: {} Terminating.", s);
+                    break;
+                }
+                Err(StreamEvent::Eof) => {
+                    break;
+                }
             }
         }
     }
 }
 
 impl <'a> ReadStr for FdMux<'a> {
-    fn read_str(&mut self) -> Result<String,Error> {
+    fn read_str(&mut self) -> Result<String,StreamEvent> {
         let ret = unsafe { poll(self.fds.as_mut_ptr(), self.fds.len() as u64, -1) };
         if ret > 0 {
             let len = self.fds.len();
@@ -60,7 +70,7 @@ impl <'a> ReadStr for FdMux<'a> {
             }
         }
 
-        return Err(Error::new(ErrorKind::Other, "poll() syscall failed"));
+        return Err(StreamEvent::Error("poll() syscall failed".to_string()));
     }
 }
 
@@ -70,7 +80,7 @@ pub struct NamedReadPipe {
 }
 
 impl NamedReadPipe {
-    pub fn new(name: String) -> Result<Self,Error> {
+    pub fn new(name: String) -> Result<Self,StreamEvent> {
         unsafe {
             unlink(name.as_ptr() as *const i8);
             let ret = mkfifo(name.as_ptr() as *const i8, 0o666);
@@ -83,30 +93,38 @@ impl NamedReadPipe {
                 }
             }
     
-            return Err(Error::new(ErrorKind::PermissionDenied, "Can't open fifo"));
+            return Err(StreamEvent::Error("Can't open fifo".to_string()));
         }
     }
 }
 
 impl ReadStr for NamedReadPipe {
-    fn read_str(&mut self) -> Result<String, Error> {
+    fn read_str(&mut self) -> Result<String, StreamEvent> {
         let mut buff: [u8;1024] = [0;1024];
         unsafe {
             let n = read(self.fd, buff.as_mut_ptr() as *mut c_void, buff.len());
             if n > 0 {
                 return Ok(String::from(std::str::from_utf8(&buff[0..n as usize]).unwrap()));
             }
-            return Err(Error::new(ErrorKind::UnexpectedEof, "Can't read named pipe"));
+            return Err(StreamEvent::Error("Can't read named pipe".to_string()));
         }
     }
 }
 
+const CTRL_D: u8 = 0x04;
+
 impl ReadStr for std::io::Stdin {
-    fn read_str(&mut self) -> Result<String, Error> {
+    fn read_str(&mut self) -> Result<String, StreamEvent> {
         let mut buff: [u8; 10] = [0;10];
         match self.read(&mut buff) {
-            Ok(n) => Ok(String::from(std::str::from_utf8(&buff[0..n]).unwrap())),
-            Err(e) => Err(e)
+            Ok(n) => {
+                if buff[0] == CTRL_D {
+                    Err(StreamEvent::Eof)
+                } else {
+                    Ok(String::from(std::str::from_utf8(&buff[0..n]).unwrap()))
+                }
+            },
+            Err(e) => Err(StreamEvent::Error(e.to_string()))
         }
     }
 }
@@ -133,7 +151,7 @@ impl<I:Muxable> AsRawFd for EchoPipe<I> {
 }
 
 impl<I:Muxable> ReadStr for EchoPipe<I> {
-    fn read_str(&mut self) -> Result<String,Error> {
+    fn read_str(&mut self) -> Result<String,StreamEvent> {
         self.input.read_str().map(|s| {
                                 print!("{}", s);
                                 s
