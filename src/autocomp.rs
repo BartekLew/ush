@@ -55,12 +55,16 @@ impl<'a> TermCtx<'a> {
     }
 }
 
+const BACKSPACE: u8 = 0x7f;
+const CTRL_D: u8 = 0x04;
+
 fn more_keys<'a>() -> KeyBind<TermCtx<'a>> {
     HashMap::from([
         (b' ', KeyAction::Action(ac_space)),
         (b'\n', KeyAction::Action(ac_ret)),
-        (0x7f, KeyAction::Action(ac_bs)),
-        (b'\t', KeyAction::Action(quit_cmd))
+        (BACKSPACE, KeyAction::Action(ac_bs)),
+        (b'\t', KeyAction::Action(quit_cmd)),
+        (CTRL_D, KeyAction::Action(terminate))
     ])
 }
 
@@ -68,7 +72,9 @@ fn initial_keys<'a>() -> KeyBind<TermCtx<'a>> {
     HashMap::from(
         [(b'\n', KeyAction::Action(send_output)),
          (b'\t', KeyAction::Action(enter_cmd)),
-         (0x7f, KeyAction::Action(ac_min_bs))])
+         (BACKSPACE, KeyAction::Action(ac_min_bs)),
+         (CTRL_D, KeyAction::Action(terminate))
+    ])
 }
 
 pub type MyReader<'a> = TermReader<TermCtx<'a>>;
@@ -82,6 +88,10 @@ pub fn default_term<'a,'b>(hints: &'b ShCommands) -> MyReader<'a>
 fn enter_cmd<'a>(tr: &mut MyReader<'a>, _keys: &[u8]) -> Reading {
     tr.set_mapping(more_keys(), KeyAction::Action(cmd_elsekey));
     Reading::tbc(None)
+}
+
+fn terminate<'a>(_tr: &mut MyReader<'a>, _keys: &[u8]) -> Reading {
+    Reading::finished(None)
 }
 
 fn send_output<'a>(tr: &mut MyReader<'a>, _keys: &[u8]) -> Reading {
@@ -195,6 +205,7 @@ fn ac_ret<'a> (tr: &mut MyReader<'a>, _: &[u8]) -> Reading {
     Term.echo(b"\n");
     
     tr.ctx.autocomplete();
+    println!("{:?}", tr.ctx.val());
     Reading::finished(None)
 }
 

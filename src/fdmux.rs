@@ -111,19 +111,11 @@ impl ReadStr for NamedReadPipe {
     }
 }
 
-const CTRL_D: u8 = 0x04;
-
 impl ReadStr for std::io::Stdin {
     fn read_str(&mut self) -> Result<String, StreamEvent> {
         let mut buff: [u8; 10] = [0;10];
         match self.read(&mut buff) {
-            Ok(n) => {
-                if buff[0] == CTRL_D {
-                    Err(StreamEvent::Eof)
-                } else {
-                    Ok(String::from(std::str::from_utf8(&buff[0..n]).unwrap()))
-                }
-            },
+            Ok(n) => Ok(String::from(std::str::from_utf8(&buff[0..n]).unwrap())),
             Err(e) => Err(StreamEvent::Error(e.to_string()))
         }
     }

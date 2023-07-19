@@ -137,11 +137,10 @@ impl <'a, T:Muxable> ReadStr for TermProc<'a,T> {
     fn read_str(&mut self) -> Result<String, StreamEvent> {
         match self.input.read_str() {
             Ok(s) => { let status = self.tr.accept(s.as_bytes());
-                       if !status.tbc {
-                            println!("{:?}", self.tr.ctx.val());
-                            self.tr = default_term(self.tr.ctx.hints);
+                       match status.tbc {
+                            true => Ok(status.output.unwrap_or(String::from(""))),
+                            false => Err(StreamEvent::Eof)
                        }
-                       Ok(status.output.unwrap_or(String::from("")))
                      },
             Err(e) => Err(e)
         }
