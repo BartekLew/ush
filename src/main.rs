@@ -6,9 +6,11 @@ use crate::term::*;
 use crate::hint::*;
 use crate::fdmux::*;
 
+use std::io::Write;
+
 fn main() {
     let mut cmdline = std::env::args().skip(1);
-    let output = cmdline.next().map(|runcmd| -> IOPipe {
+    let mut output = cmdline.next().map(|runcmd| -> IOPipe {
             let args : Vec<String> = cmdline.collect();
             Pty::new().unwrap()
                       .spawn_output(runcmd, args).unwrap()
@@ -21,12 +23,13 @@ fn main() {
 
     let hints = ShCommands::new();
     let mut cmdpipe = TermProc::new(StdinReadKey::new(), &hints);
-    let mut inmux = FdMux::new(2)
-                      .add(&mut cmdpipe)
-                      .add(&mut inpipe);
-                      
-    match output {
-        Some(o) => o.consume(inmux),
-        None => inmux.pass_to(std::io::stdout())
-    };
+
+    let mut stdout = std::io::stdout();
+    let out: &mut dyn Write = output.as_mut()
+                                    .map(|x| -> &mut dyn Write { x })
+                                    .unwrap_or(&mut stdout );
+
+    Topology::new(2)
+             .add(Destination::new(out, vec![&mut cmdpipe, &mut inpipe]))
+             .run();
 }

@@ -4,7 +4,7 @@ extern crate termios;
 use libc::{poll,pollfd,POLLIN,read,unlink,close,mkfifo,
            open,O_RDWR,c_void,posix_openpt, O_NOCTTY,
            grantpt, unlockpt, ptsname, fork, setsid,
-           dup2, execvp, write, perror };
+           dup2, execvp, write, pid_t, kill, SIGKILL };
 use termios::*;
 use std::os::unix::prelude::{RawFd, AsRawFd};
 use std::io::{Error,ErrorKind, Stdin, Write, Read};
@@ -19,63 +19,6 @@ pub trait ReadStr {
 }
 
 pub trait Muxable:AsRawFd+ReadStr {}
-
-pub struct FdMux<'a> {
-    inputs : Vec<&'a mut dyn Muxable>,
-    fds: Vec<pollfd>
-}
-
-impl <'a> FdMux <'a> {
-    pub fn new(size : usize) -> Self {
-        FdMux { inputs: Vec::with_capacity(size),
-                fds: Vec::with_capacity(size) }
-    }
-
-    pub fn add<M:Muxable>(mut self, src: &'a mut M) -> FdMux<'a> {
-        self.fds.push(pollfd { fd: src.as_raw_fd(),
-                               events: POLLIN,
-                               revents: 0 });
-        self.inputs.push(src);
-        self
-    }
-
-    pub fn pass_to<W:Write>(&mut self, mut out: W) {
-        loop {
-            match self.read_str() {
-                Ok(s) => {
-                    if s.len() > 0 {
-                        out.write(s.as_bytes()).unwrap();
-                        out.flush().unwrap();
-                    }
-                },
-                Err(StreamEvent::Error(s)) => {
-                    println!("Error: {} Terminating.", s);
-                    break;
-                }
-                Err(StreamEvent::Eof) => {
-                    break;
-                }
-            }
-        }
-    }
-}
-
-impl <'a> ReadStr for FdMux<'a> {
-    fn read_str(&mut self) -> Result<String,StreamEvent> {
-        let ret = unsafe { poll(self.fds.as_mut_ptr(), self.fds.len() as u64, -1) };
-        if ret > 0 {
-            let len = self.fds.len();
-            for i in 0..len {
-                let desc = self.fds[i];
-                if desc.revents & desc.events > 0 {
-                    return self.inputs[i].read_str();
-                }
-            }
-        }
-
-        return Err(StreamEvent::Error("poll() syscall failed".to_string()));
-    }
-}
 
 pub struct NamedReadPipe {
     pub fd: RawFd,
@@ -191,17 +134,23 @@ impl Drop for StdinReadKey {
     }
 }
 
-pub trait PipeConsumer {
-    fn consume(self, input: FdMux);
-}
-
 pub struct IOPipe {
-    fd: RawFd
+    fd: RawFd,
+    pid: Option<pid_t>
 }
 
 impl IOPipe {
-    pub fn new(fd: RawFd) -> Self {
-        IOPipe { fd: fd }
+    pub fn new(fd: RawFd, pid: Option<pid_t>) -> Self {
+        IOPipe { fd: fd, pid: pid }
+    }
+}
+
+impl Drop for IOPipe {
+    fn drop(&mut self) {
+        match self.pid {
+            Some(pid) => unsafe { kill(pid, SIGKILL); },
+            None => {}
+        }
     }
 }
 
@@ -220,19 +169,13 @@ impl ReadStr for IOPipe {
     }
 }
 
-impl PipeConsumer for IOPipe {
-    fn consume(self, mut input: FdMux) {
-        input.pass_to(self);
-    }
-}
-
 impl Write for IOPipe {
     fn write(&mut self, buff: &[u8]) -> Result<usize, Error> {
         let n = unsafe { write(self.fd, buff.as_ptr() as *const c_void, buff.len()) };
-        if n > 0 {
+        if n >= 0 {
             Ok(n as usize)
         } else {
-            Err(Error::new(ErrorKind::Other, "Can't read IOPipe"))
+            Err(Error::new(ErrorKind::Other, "Can't write IOPipe"))
         }
     }
 
@@ -242,8 +185,8 @@ impl Write for IOPipe {
 }
 
 pub struct Pty {
-    host: IOPipe,
-    guest: IOPipe
+    host: RawFd,
+    guest: RawFd
 }
 
 impl Pty {
@@ -255,8 +198,8 @@ impl Pty {
                 if guestname as usize > 0 {
                     let guest = open(guestname, O_RDWR);
                     if guest > 0 {
-                        return Some(Pty { host: IOPipe::new(host),
-                                          guest: IOPipe::new(guest) });
+                        return Some(Pty { host: host,
+                                          guest: guest });
                     }
                 }
             }
@@ -269,21 +212,21 @@ impl Pty {
         if pid < 0 { return Err("Can't fork()".to_string()); }
 
         if pid > 0 {
-            unsafe { close(self.guest.fd) };
-            return Ok(IOPipe::new(self.host.fd));
+            unsafe { close(self.guest) };
+            return Ok(IOPipe::new(self.host, Some(pid)));
         }
 
         unsafe {
-            close(self.host.fd);
+            close(self.host);
 
             setsid();
-            dup2(self.guest.fd, 0);
+            dup2(self.guest, 0);
 
             // skip outputs
-            //dup2(self.guest.fd, 1);
-            //dup2(self.guest.fd, 2);
+            //dup2(self.guest, 1);
+            //dup2(self.guest, 2);
 
-            close(self.guest.fd);
+            close(self.guest);
 
             let mut cargs : Vec<*const i8> =
                 args.iter().map(|str| str.as_ptr() as *const i8)
@@ -293,6 +236,74 @@ impl Pty {
             execvp(command.as_ptr() as *const i8, cargs.as_ptr() as *const *const i8);
 
             return Err("execvp() returned!".to_string());
+        }
+    }
+}
+
+pub struct Destination<'a> {
+    writer: &'a mut dyn Write,
+    sources: Vec<&'a mut dyn Muxable>
+}
+
+impl <'a> Destination<'a> {
+    pub fn new(writer: &'a mut dyn Write, sources: Vec<&'a mut dyn Muxable>) -> Self {
+        Destination { writer: writer, sources: sources }
+    }
+}
+
+pub fn read_into<'a>(i: &mut dyn Muxable, o: &mut dyn Write) -> Result<(), StreamEvent> {
+    match i.read_str() {
+        Ok(s) => match o.write(s.as_bytes()) {
+                    Ok(_) => Ok (()),
+                    Err(_) => Err(StreamEvent::Error("Can't write".to_string()))
+                 },
+        Err(e) => Err(e)
+    }
+}
+
+pub struct Topology<'a> {
+    destinations: Vec<Destination<'a>>,
+    pollstruct: Vec<pollfd>
+}
+
+impl<'a> Topology<'a> {
+    pub fn new(size: usize) -> Self {
+        Topology { destinations: Vec::with_capacity(size),
+                   pollstruct: Vec::with_capacity(size) }
+    }
+
+    pub fn add(mut self, dest: Destination<'a>) -> Self {
+        dest.sources.iter()
+                    .for_each(|s| self.pollstruct.push(pollfd {
+                                                        fd: s.as_raw_fd(),
+                                                        events: POLLIN,
+                                                        revents: 0 }));
+        self.destinations.push(dest);
+        self
+    }
+
+    pub fn run(mut self) {
+        loop {
+            unsafe {
+                let ret = poll(self.pollstruct.as_mut_ptr(), self.pollstruct.len() as u64, -1);
+                if ret > 0 {
+                    let mut i = 0;
+                    for di in 0..self.destinations.len() {
+                        let d = &mut self.destinations[di];
+                        for si in 0..d.sources.len() {
+                            if self.pollstruct[i].revents & POLLIN > 0 {
+                                match read_into(d.sources[si], d.writer) {
+                                    Err(StreamEvent::Eof) => {return;},
+                                    Err(StreamEvent::Error(e)) => panic!("{}", e),
+                                    Ok(()) => {}
+                                }
+                            }
+
+                            i+=1;
+                        }
+                    }
+                }
+            }
         }
     }
 }
