@@ -4,7 +4,8 @@ extern crate termios;
 use libc::{poll,pollfd,POLLIN,read,unlink,close,mkfifo,
            open,O_RDWR,c_void,posix_openpt, O_NOCTTY,
            grantpt, unlockpt, ptsname, fork, setsid,
-           dup2, execvp, write, pid_t, kill, SIGKILL };
+           dup2, execvp, write, pid_t, kill, SIGKILL,
+           ioctl, TIOCSCTTY };
 use termios::*;
 use std::os::unix::prelude::{RawFd, AsRawFd};
 use std::io::{Error,ErrorKind, Stdin, Write, Read};
@@ -134,6 +135,7 @@ impl Drop for StdinReadKey {
     }
 }
 
+#[derive(Clone)]
 pub struct IOPipe {
     fd: RawFd,
     pid: Option<pid_t>
@@ -168,6 +170,8 @@ impl ReadStr for IOPipe {
         }
     }
 }
+
+impl Muxable for IOPipe {}
 
 impl Write for IOPipe {
     fn write(&mut self, buff: &[u8]) -> Result<usize, Error> {
@@ -207,7 +211,7 @@ impl Pty {
         }
     }
 
-    pub fn spawn_output(self, command: String, args: Vec<String>) -> Result<IOPipe, String> {
+    pub fn spawn_output(self, args: Vec<String>) -> Result<IOPipe, String> {
         let pid = unsafe { fork() };
         if pid < 0 { return Err("Can't fork()".to_string()); }
 
@@ -220,11 +224,15 @@ impl Pty {
             close(self.host);
 
             setsid();
-            dup2(self.guest, 0);
+            ioctl(self.guest, TIOCSCTTY, 0 as *const c_void);
 
-            // skip outputs
-            //dup2(self.guest, 1);
-            //dup2(self.guest, 2);
+            let mut tos = Termios::from_fd(self.guest).unwrap();
+            tos.c_lflag &= !(ECHO | ICANON);
+            tcsetattr(self.guest, TCSAFLUSH, &tos).unwrap();
+
+            dup2(self.guest, 0);
+            dup2(self.guest, 1);
+            dup2(self.guest, 2);
 
             close(self.guest);
 
@@ -233,7 +241,7 @@ impl Pty {
                            .collect();
             cargs.push(0 as *const i8);
 
-            execvp(command.as_ptr() as *const i8, cargs.as_ptr() as *const *const i8);
+            execvp(args[0].as_ptr() as *const i8, cargs.as_ptr() as *const *const i8);
 
             return Err("execvp() returned!".to_string());
         }
@@ -253,7 +261,7 @@ impl <'a> Destination<'a> {
 
 pub fn read_into<'a>(i: &mut dyn Muxable, o: &mut dyn Write) -> Result<(), StreamEvent> {
     match i.read_str() {
-        Ok(s) => match o.write(s.as_bytes()) {
+        Ok(s) => match o.write(s.as_bytes()).map(|_| o.flush()) {
                     Ok(_) => Ok (()),
                     Err(_) => Err(StreamEvent::Error("Can't write".to_string()))
                  },

@@ -6,30 +6,54 @@ use crate::term::*;
 use crate::hint::*;
 use crate::fdmux::*;
 
-use std::io::Write;
+struct Sink {
+    std: Option<std::io::Stdout>,
+    pipe: Option<IOPipe>
+}
+
+impl Sink {
+    fn new(pipe: Option<IOPipe>) -> Self {
+        match pipe {
+            Some(handle) => Sink { std: None, pipe: Some(handle) },
+            None => Sink { std: Some(std::io::stdout()), pipe: None }
+        }
+    }
+    
+    fn run<T: Muxable, U: Muxable>(mut self, mut cmdpipe: T, mut inpipe: U)  {
+        match self.pipe {
+            Some(mut pipe) => {
+                let mut second = pipe.clone();
+                Topology::new(2)
+                         .add(Destination::new(&mut std::io::stdout(), vec![&mut pipe]))
+                         .add(Destination::new(&mut second, vec![&mut cmdpipe, &mut inpipe]))
+                         .run();
+            }, 
+            None => {
+                Topology::new(2)
+                         .add(Destination::new(&mut self.std.as_mut().unwrap(),
+                              vec![&mut cmdpipe, &mut inpipe]))
+                         .run();
+            }
+        }
+    }
+}
 
 fn main() {
-    let mut cmdline = std::env::args().skip(1);
-    let mut output = cmdline.next().map(|runcmd| -> IOPipe {
-            let args : Vec<String> = cmdline.collect();
-            Pty::new().unwrap()
-                      .spawn_output(runcmd, args).unwrap()
-        });
+    let cmdline: Vec<String> = std::env::args().skip(1).collect();
+    let output = Sink::new(
+                match cmdline.len() > 0 {
+                    true => Some(Pty::new().unwrap()
+                                           .spawn_output(cmdline)
+                                           .unwrap()),
+                    false => None
+                });
 
-
-    let mut inpipe = EchoPipe{
-                        input: NamedReadPipe::new("/tmp/ush".to_string())
-                                             .unwrap() };
 
     let hints = ShCommands::new();
-    let mut cmdpipe = TermProc::new(StdinReadKey::new(), &hints);
 
-    let mut stdout = std::io::stdout();
-    let out: &mut dyn Write = output.as_mut()
-                                    .map(|x| -> &mut dyn Write { x })
-                                    .unwrap_or(&mut stdout );
-
-    Topology::new(2)
-             .add(Destination::new(out, vec![&mut cmdpipe, &mut inpipe]))
-             .run();
+    output.run(TermProc::new(StdinReadKey::new(), &hints),
+               EchoPipe{
+                        input: NamedReadPipe::new("/tmp/ush".to_string())
+                                             .unwrap()
+               });
 }
