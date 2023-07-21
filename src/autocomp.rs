@@ -5,7 +5,7 @@ use crate::term::*;
 use crate::hint::*;
 
 pub struct TermCtx<'a> {
-    pub output : String,
+    pub output : Vec<u8>,
     pub current : String,
     pub args : Vec<String>,
     pub chint : Option<ExcerptIter<'a, String>>,
@@ -21,7 +21,7 @@ impl<'a> DefaultVal for TermCtx<'a> {
 impl<'a> TermCtx<'a> {
     fn new(hints: &'a ShCommands) -> Self { 
         TermCtx{
-            output: String::from(""),
+            output: vec![],
             current: String::from(""),
             args: vec![],
             chint: None,
@@ -96,9 +96,9 @@ fn terminate<'a>(_tr: &mut MyReader<'a>, _keys: &[u8]) -> Reading {
 
 fn send_output<'a>(tr: &mut MyReader<'a>, _keys: &[u8]) -> Reading {
     let mut out = tr.ctx.output.clone();
-    out.push_str("\n");
+    out.push(b'\n');
     Term.echo(b"\n");
-    tr.ctx.output = String::from("");
+    tr.ctx.output = vec![];
     Reading::tbc(Some(out))
 }
 
@@ -136,7 +136,7 @@ fn cmd_elsekey<'a> (tr: &mut MyReader<'a>, keys: &[u8]) -> Reading {
 
 fn out_elsekey<'a>(tr: &mut MyReader<'a>, keys: &[u8]) -> Reading {
     echo(keys);
-    tr.ctx.output.push_str(str::from_utf8(keys).unwrap());
+    tr.ctx.output.extend_from_slice(keys);
     Reading::tbc(None)
 }
 

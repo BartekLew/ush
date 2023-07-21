@@ -9,15 +9,15 @@ use crate::fdmux::*;
 
 pub struct Reading {
     pub tbc : bool,
-    pub output : Option<String>
+    pub output : Option<Vec<u8>>
 }
 
 impl Reading {
-    pub fn finished(output: Option<String>) -> Self {
+    pub fn finished(output: Option<Vec<u8>>) -> Self {
         Reading { tbc: false, output: output }
     }
 
-    pub fn tbc(output: Option<String>) -> Self {
+    pub fn tbc(output: Option<Vec<u8>>) -> Self {
         Reading { tbc: true, output: output }
     }
 }
@@ -134,11 +134,11 @@ impl <'a, T:Muxable> AsRawFd for TermProc<'a,T> {
 }
 
 impl <'a, T:Muxable> ReadStr for TermProc<'a,T> {
-    fn read_str(&mut self) -> Result<String, StreamEvent> {
+    fn read_str(&mut self) -> Result<Vec<u8>, StreamEvent> {
         match self.input.read_str() {
-            Ok(s) => { let status = self.tr.accept(s.as_bytes());
+            Ok(s) => { let status = self.tr.accept(s.as_ref());
                        match status.tbc {
-                            true => Ok(status.output.unwrap_or(String::from(""))),
+                            true => Ok(status.output.unwrap_or(vec![])),
                             false => Err(StreamEvent::Eof)
                        }
                      },

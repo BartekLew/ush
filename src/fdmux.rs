@@ -16,7 +16,7 @@ pub enum StreamEvent {
 }
 
 pub trait ReadStr {
-    fn read_str(&mut self) -> Result<String, StreamEvent>;
+    fn read_str(&mut self) -> Result<Vec<u8>, StreamEvent>;
 }
 
 pub trait Muxable:AsRawFd+ReadStr {}
@@ -46,12 +46,12 @@ impl NamedReadPipe {
 }
 
 impl ReadStr for NamedReadPipe {
-    fn read_str(&mut self) -> Result<String, StreamEvent> {
+    fn read_str(&mut self) -> Result<Vec<u8>, StreamEvent> {
         let mut buff: [u8;1024] = [0;1024];
         unsafe {
             let n = read(self.fd, buff.as_mut_ptr() as *mut c_void, buff.len());
             if n > 0 {
-                return Ok(String::from(std::str::from_utf8(&buff[0..n as usize]).unwrap()));
+                return Ok(Vec::from(&buff[0..n as usize]));
             }
             return Err(StreamEvent::Error("Can't read named pipe".to_string()));
         }
@@ -59,10 +59,10 @@ impl ReadStr for NamedReadPipe {
 }
 
 impl ReadStr for std::io::Stdin {
-    fn read_str(&mut self) -> Result<String, StreamEvent> {
+    fn read_str(&mut self) -> Result<Vec<u8>, StreamEvent> {
         let mut buff: [u8; 10] = [0;10];
         match self.read(&mut buff) {
-            Ok(n) => Ok(String::from(std::str::from_utf8(&buff[0..n]).unwrap())),
+            Ok(n) => Ok(Vec::from(&buff[0..n])),
             Err(e) => Err(StreamEvent::Error(e.to_string()))
         }
     }
@@ -90,9 +90,9 @@ impl<I:Muxable> AsRawFd for EchoPipe<I> {
 }
 
 impl<I:Muxable> ReadStr for EchoPipe<I> {
-    fn read_str(&mut self) -> Result<String,StreamEvent> {
+    fn read_str(&mut self) -> Result<Vec<u8>,StreamEvent> {
         self.input.read_str().map(|s| {
-                                print!("{}", s);
+                                print!("{}", String::from(std::str::from_utf8(s.as_ref()).unwrap()));
                                 s
                             })
     }
@@ -121,7 +121,7 @@ impl AsRawFd for StdinReadKey {
 }
 
 impl ReadStr for StdinReadKey {
-    fn read_str(&mut self) -> Result<String, StreamEvent> {
+    fn read_str(&mut self) -> Result<Vec<u8>, StreamEvent> {
         self.handle.read_str()  
     }
 }
@@ -161,11 +161,11 @@ impl AsRawFd for IOPipe {
 }
 
 impl ReadStr for IOPipe {
-    fn read_str(&mut self) -> Result<String, StreamEvent> {
+    fn read_str(&mut self) -> Result<Vec<u8>, StreamEvent> {
         let mut buff: [u8;1024] = [0;1024];
         let n = unsafe { read(self.fd, buff.as_mut_ptr() as *mut c_void, 1024) };
         match n > 0 {
-            true => Ok(String::from(std::str::from_utf8(&buff[0..n as usize]).unwrap())),
+            true => Ok(Vec::from(&buff[0..n as usize])),
             false => Err(StreamEvent::Error("can't read IOPipe".to_string()))
         }
     }
@@ -261,7 +261,7 @@ impl <'a> Destination<'a> {
 
 pub fn read_into<'a>(i: &mut dyn Muxable, o: &mut dyn Write) -> Result<(), StreamEvent> {
     match i.read_str() {
-        Ok(s) => match o.write(s.as_bytes()).map(|_| o.flush()) {
+        Ok(s) => match o.write(s.as_ref()).map(|_| o.flush()) {
                     Ok(_) => Ok (()),
                     Err(_) => Err(StreamEvent::Error("Can't write".to_string()))
                  },
