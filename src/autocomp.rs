@@ -57,13 +57,14 @@ impl<'a> TermCtx<'a> {
 
 const BACKSPACE: u8 = 0x7f;
 const CTRL_D: u8 = 0x04;
+const CTRL_R: u8 = 0x12;
 
 fn more_keys<'a>() -> KeyBind<TermCtx<'a>> {
     HashMap::from([
         (b' ', KeyAction::Action(ac_space)),
         (b'\n', KeyAction::Action(ac_ret)),
         (BACKSPACE, KeyAction::Action(ac_bs)),
-        (b'\t', KeyAction::Action(quit_cmd)),
+        (b'\t', KeyAction::Action(enter_buffered_out)),
         (CTRL_D, KeyAction::Action(terminate))
     ])
 }
@@ -72,8 +73,17 @@ fn initial_keys<'a>() -> KeyBind<TermCtx<'a>> {
     HashMap::from(
         [(b'\n', KeyAction::Action(send_output)),
          (b'\t', KeyAction::Action(enter_cmd)),
+         (CTRL_R, KeyAction::Action(enter_raw)),
          (BACKSPACE, KeyAction::Action(ac_min_bs)),
          (CTRL_D, KeyAction::Action(terminate))
+    ])
+}
+
+fn raw_keys<'a>() -> KeyBind<TermCtx<'a>> {
+    HashMap::from([
+        (BACKSPACE, KeyAction::Action(raw_bs)),
+        (CTRL_R, KeyAction::Action(enter_buffered_out)),
+        (CTRL_D, KeyAction::Action(terminate))
     ])
 }
 
@@ -102,7 +112,7 @@ fn send_output<'a>(tr: &mut MyReader<'a>, _keys: &[u8]) -> Reading {
     Reading::tbc(Some(out))
 }
 
-fn quit_cmd<'a>(tr: &mut MyReader<'a>, _keys: &[u8]) -> Reading {
+fn enter_buffered_out<'a>(tr: &mut MyReader<'a>, _keys: &[u8]) -> Reading {
     tr.set_mapping(initial_keys(), KeyAction::Action(out_elsekey));
     Reading::tbc(None)
 }
@@ -209,3 +219,18 @@ fn ac_ret<'a> (tr: &mut MyReader<'a>, _: &[u8]) -> Reading {
     Reading::finished(None)
 }
 
+fn raw_bs<'a>(_tr: &mut MyReader<'a>, _keys: &[u8]) -> Reading {
+    let v = vec![0x08];
+    echo(&v);
+    Reading::tbc(Some(v))
+}
+
+fn raw_elsekey<'a>(_tr: &mut MyReader<'a>, keys: &[u8]) -> Reading {
+    Reading::tbc(Some(Vec::from(keys)))
+}
+    
+fn enter_raw<'a>(tr: &mut MyReader<'a>, _keys: &[u8]) -> Reading {
+    tr.set_mapping(raw_keys(), KeyAction::Action(raw_elsekey));
+
+    Reading::tbc(None)
+}

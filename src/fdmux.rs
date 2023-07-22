@@ -5,7 +5,7 @@ use libc::{poll,pollfd,POLLIN,read,unlink,close,mkfifo,
            open,O_RDWR,c_void,posix_openpt, O_NOCTTY,
            grantpt, unlockpt, ptsname, fork, setsid,
            dup2, execvp, write, pid_t, kill, SIGKILL,
-           ioctl, TIOCSCTTY };
+           ioctl, TIOCSCTTY, fsync };
 use termios::*;
 use std::os::unix::prelude::{RawFd, AsRawFd};
 use std::io::{Error,ErrorKind, Stdin, Write, Read};
@@ -184,7 +184,11 @@ impl Write for IOPipe {
     }
 
     fn flush(&mut self) -> Result<(), Error> {
-        Ok(())
+        if unsafe { fsync(self.fd) } == 0 {
+            Ok(())
+        } else {
+            Err(Error::new(ErrorKind::Other, "Can't fsync"))
+        }
     }
 }
 
