@@ -5,7 +5,7 @@ use libc::{poll,pollfd,POLLIN,read,unlink,close,mkfifo,
            open,O_RDWR,c_void,posix_openpt, O_NOCTTY,
            grantpt, unlockpt, ptsname, fork, setsid,
            dup2, execvp, write, pid_t, kill, SIGKILL,
-           ioctl, TIOCSCTTY, fsync };
+           ioctl, TIOCSCTTY, fsync, POLLHUP };
 use termios::*;
 use std::os::unix::prelude::{RawFd, AsRawFd};
 use std::io::{Error,ErrorKind, Stdin, Write, Read};
@@ -149,8 +149,11 @@ impl IOPipe {
 
 impl Drop for IOPipe {
     fn drop(&mut self) {
+        unsafe { close(self.fd); };
         match self.pid {
-            Some(pid) => unsafe { kill(pid, SIGKILL); },
+            Some(pid) => unsafe {
+                kill(pid, SIGKILL);
+            },
             None => {}
         }
     }
@@ -252,18 +255,36 @@ impl Pty {
     }
 }
 
+pub trait DoCtrlD: Write {
+    fn ctrl_d(&mut self) -> bool;
+}
+
+impl DoCtrlD for std::io::Stdout {
+    fn ctrl_d(&mut self) -> bool {
+        false
+    }
+}
+
+impl DoCtrlD for IOPipe {
+    fn ctrl_d(&mut self) -> bool {
+        let sig = [0x04 as u8];
+        self.write(&sig).unwrap();
+        true
+    }
+}
+
 pub struct Destination<'a> {
-    writer: &'a mut dyn Write,
+    writer: &'a mut dyn DoCtrlD,
     sources: Vec<&'a mut dyn Muxable>
 }
 
 impl <'a> Destination<'a> {
-    pub fn new(writer: &'a mut dyn Write, sources: Vec<&'a mut dyn Muxable>) -> Self {
+    pub fn new(writer: &'a mut dyn DoCtrlD, sources: Vec<&'a mut dyn Muxable>) -> Self {
         Destination { writer: writer, sources: sources }
     }
 }
 
-pub fn read_into<'a>(i: &mut dyn Muxable, o: &mut dyn Write) -> Result<(), StreamEvent> {
+pub fn read_into<'a>(i: &mut dyn Muxable, o: &mut dyn DoCtrlD) -> Result<(), StreamEvent> {
     match i.read_str() {
         Ok(s) => match o.write(s.as_ref()).map(|_| o.flush()) {
                     Ok(_) => Ok (()),
@@ -305,10 +326,14 @@ impl<'a> Topology<'a> {
                         for si in 0..d.sources.len() {
                             if self.pollstruct[i].revents & POLLIN > 0 {
                                 match read_into(d.sources[si], d.writer) {
-                                    Err(StreamEvent::Eof) => {return;},
+                                    Err(StreamEvent::Eof) => {
+                                        if !d.writer.ctrl_d() { return; }
+                                    },
                                     Err(StreamEvent::Error(e)) => panic!("{}", e),
                                     Ok(()) => {}
                                 }
+                            } else if self.pollstruct[i].revents & POLLHUP > 0 {
+                                return;
                             }
 
                             i+=1;

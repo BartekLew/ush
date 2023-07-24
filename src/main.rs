@@ -30,7 +30,7 @@ impl Sink {
             }, 
             None => {
                 Topology::new(2)
-                         .add(Destination::new(&mut self.std.as_mut().unwrap(),
+                         .add(Destination::new(self.std.as_mut().unwrap(),
                               vec![&mut cmdpipe, &mut inpipe]))
                          .run();
             }
