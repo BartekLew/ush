@@ -1,0 +1,13 @@
+ush
+---
+
+An additional layer between terminal and shell/applications.
+It's supposed to be to shell what is vim to ed. Allowing any
+automatization layer independent from application (if it's
+working in terminal).
+
+Another feature (available now) is possibility to multiplex
+input. For example I run R repl through ush, creating named
+pipe which is side input. So I can use R normally (possibly
+with some keybindings or scripts (yet to be implemented),
+but allowing input from other programs at the same time.
