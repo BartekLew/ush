@@ -9,7 +9,7 @@ pub struct TermCtx<'a> {
     pub current : String,
     pub args : Vec<String>,
     pub chint : Option<ExcerptIter<'a, String>>,
-    pub hints : &'a ShCommands
+    pub hints : &'a dyn Commands
 }
 
 impl<'a> DefaultVal for TermCtx<'a> {
@@ -19,7 +19,7 @@ impl<'a> DefaultVal for TermCtx<'a> {
 }
 
 impl<'a> TermCtx<'a> {
-    fn new(hints: &'a ShCommands) -> Self { 
+    fn new(hints: &'a dyn Commands) -> Self { 
         TermCtx{
             output: vec![],
             current: String::from(""),
@@ -89,7 +89,7 @@ fn raw_keys<'a>() -> KeyBind<TermCtx<'a>> {
 
 pub type MyReader<'a> = TermReader<TermCtx<'a>>;
 
-pub fn default_term<'a,'b>(hints: &'b ShCommands) -> MyReader<'a>
+pub fn default_term<'a,'b>(hints: &'b dyn Commands) -> MyReader<'a>
         where 'b:'a {
     MyReader::new(TermCtx::new(hints),
                   initial_keys(), KeyAction::Action(out_elsekey))

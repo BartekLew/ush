@@ -1,6 +1,10 @@
 use std::fs::*;
 use std::iter::*;
 
+pub trait Commands {
+    fn for_prefix(&self, prefix: &String) -> Option<ExcerptIter<String>>;
+}
+
 pub struct ShCommands {
     cmds : Vec<String>,
 }
@@ -29,8 +33,10 @@ impl ShCommands {
         cmds.dedup();
         ShCommands { cmds: cmds }
     }
+}
 
-    pub fn for_prefix(&self, prefix: &String) -> Option<ExcerptIter<String>>{
+impl Commands for ShCommands {
+    fn for_prefix(&self, prefix: &String) -> Option<ExcerptIter<String>>{
         let mut it = self.cmds.iter().enumerate().peekable();
         while match it.peek() {
                 Some(x) => !prefix_eq(x.1, prefix),

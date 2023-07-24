@@ -124,7 +124,7 @@ pub struct TermProc<'a,T:Muxable> {
 }
 
 impl <'a, T:Muxable> TermProc<'a,T> {
-    pub fn new(input: T, hints: &'a ShCommands) -> Self {
+    pub fn new<C:Commands>(input: T, hints: &'a C) -> Self {
         TermProc { input: input, tr: default_term(hints) }
     }
 }
