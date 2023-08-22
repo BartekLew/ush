@@ -70,7 +70,9 @@ impl<T:DefaultVal> TermReader<T> {
     }
 
     pub fn accept(&mut self, keys : &[u8]) -> Reading {
-        if self.key_map.contains_key(&keys[0]) {
+        if keys.len() == 0 {
+            Reading::tbc(None)
+        } else if self.key_map.contains_key(&keys[0]) {
             let x = self.key_map[&keys[0]];
             x.run(self, keys)
         } else {

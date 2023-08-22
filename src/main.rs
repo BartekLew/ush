@@ -5,6 +5,7 @@ mod fdmux;
 use crate::term::*;
 use crate::hint::*;
 use crate::fdmux::*;
+use libc::getpid;
 
 struct Sink {
     std: Option<std::io::Stdout>,
@@ -53,7 +54,7 @@ fn main() {
 
     output.run(TermProc::new(StdinReadKey::new(), &hints),
                EchoPipe{
-                        input: NamedReadPipe::new("/tmp/ush".to_string())
+                        input: NamedReadPipe::new(format!("/tmp/ush-{}", unsafe{ getpid() }))
                                              .unwrap()
                });
 }
