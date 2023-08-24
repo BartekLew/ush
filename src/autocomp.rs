@@ -221,7 +221,6 @@ fn ac_ret<'a> (tr: &mut MyReader<'a>, _: &[u8]) -> Reading {
 
 fn raw_bs<'a>(_tr: &mut MyReader<'a>, _keys: &[u8]) -> Reading {
     let v = vec![0x08];
-    echo(&v);
     Reading::tbc(Some(v))
 }
 

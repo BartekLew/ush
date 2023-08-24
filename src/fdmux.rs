@@ -233,10 +233,6 @@ impl Pty {
             setsid();
             ioctl(self.guest, TIOCSCTTY, 0 as *const c_void);
 
-            let mut tos = Termios::from_fd(self.guest).unwrap();
-            tos.c_lflag &= !(ECHO | ICANON);
-            tcsetattr(self.guest, TCSAFLUSH, &tos).unwrap();
-
             dup2(self.guest, 0);
             dup2(self.guest, 1);
             dup2(self.guest, 2);
