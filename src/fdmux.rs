@@ -9,17 +9,19 @@ use libc::{poll,pollfd,POLLIN,read,unlink,close,mkfifo,
 use termios::*;
 use std::os::unix::prelude::{RawFd, AsRawFd};
 use std::io::{Error,ErrorKind, Stdin, Write, Read};
+use std::mem;
+
 
 #[derive(Debug)]
 pub enum StreamEvent {
-    Eof, Error(String)
+    Eof, Interrupt, TermStop, Error(String)
 }
 
-pub trait ReadStr {
-    fn read_str(&mut self) -> Result<Vec<u8>, StreamEvent>;
+pub type Fd = i32;
+pub trait Muxable {
+    fn get_fds(&self) -> Vec<Fd>;
+    fn read_str(&mut self, fd: i32) -> Result<Vec<u8>, StreamEvent>;
 }
-
-pub trait Muxable:AsRawFd+ReadStr {}
 
 pub struct NamedReadPipe {
     pub fd: RawFd,
@@ -45,8 +47,9 @@ impl NamedReadPipe {
     }
 }
 
-impl ReadStr for NamedReadPipe {
-    fn read_str(&mut self) -> Result<Vec<u8>, StreamEvent> {
+impl Muxable for NamedReadPipe {
+    fn get_fds(&self) -> Vec<i32> { vec![self.fd] }
+    fn read_str(&mut self, _: i32) -> Result<Vec<u8>, StreamEvent> {
         let mut buff: [u8;1024] = [0;1024];
         unsafe {
             let n = read(self.fd, buff.as_mut_ptr() as *mut c_void, buff.len());
@@ -58,8 +61,9 @@ impl ReadStr for NamedReadPipe {
     }
 }
 
-impl ReadStr for std::io::Stdin {
-    fn read_str(&mut self) -> Result<Vec<u8>, StreamEvent> {
+impl Muxable for std::io::Stdin {
+    fn get_fds(&self) -> Vec<i32> { vec![0] }
+    fn read_str(&mut self, _:i32) -> Result<Vec<u8>, StreamEvent> {
         let mut buff: [u8; 10] = [0;10];
         match self.read(&mut buff) {
             Ok(n) => Ok(Vec::from(&buff[0..n])),
@@ -74,34 +78,125 @@ impl Drop for NamedReadPipe {
     }
 }
 
-impl AsRawFd for NamedReadPipe {
-    fn as_raw_fd(&self) -> RawFd { self.fd }
+extern "C" {
+    fn signalfd(fd: i32, mask: *const i64, flags: i32) -> i32;
+    fn sigemptyset(mask: *mut i64) -> i32;
+    fn sigaddset(mask: *mut i64, sig: i32) -> i32;
+    fn sigprocmask(how: i32, mask: *const i64, oldmask: *mut i32) -> i32;
 }
 
-impl Muxable for std::io::Stdin {}
-impl Muxable for NamedReadPipe {}
+#[repr(C)]
+struct SigInfo {
+    signo: i32,
+    _errno: i32,
+    sigcode: i32,
+    _pid: u32,
+    _uid: u32,
+    _fd: i32,        // for SIGIO
+    _tid: u32,       // Kernel Timer ID
+    _band: u32,      // for SIGIO
+    _overrun: u32,   // For timers
+    _trapno: u32,
+    _child_exit: i32,     // SIGCHLD
+    _int : i32,           // sigqueue(3)
+    _ptr : u64,           // sigqueue(3)
+    _child_utime : u64,   // SIGCHLD
+    _child_stime : u64,
+    _padding : [u8; 56]  // Pad to 128 bytes for future fields
+}
+
+pub struct SigMask {
+    mask: i64
+}
+
+const NULL : *mut i32 = 0 as *mut i32;
+const SIG_BLOCK : i32 = 0;
+const SIGINT : i32 = 2;
+const SIGTSTP : i32 = 20;
+
+impl SigMask {
+    fn new() -> Self {
+        let mut mask : i64 = 0;
+        unsafe {
+            sigemptyset(&mut mask);
+            SigMask { mask }
+        }
+    }
+
+    fn add(mut self, signal: i32) -> Self {
+        unsafe {
+            sigaddset(&mut self.mask, signal);
+        }
+
+        self
+    }
+
+    fn open(self) -> SigPipe {
+        unsafe { 
+            if sigprocmask(SIG_BLOCK, &self.mask, NULL) == -1 {
+                panic!("Can't block signals {}: {:?}",
+                       self.mask, std::io::Error::last_os_error());
+            }
+
+            let fd = signalfd(-1, &self.mask, 0);
+            if fd < 0 {
+                panic!("Can't open signalfd for {} @ {:?}",
+                       self.mask, std::io::Error::last_os_error());
+            } else {
+                SigPipe { fd }
+            }
+        }
+    }
+}
+
+struct SigPipe {
+    fd: i32
+}
+
+impl Muxable for SigPipe {
+    fn get_fds(&self) -> Vec<i32> { vec![self.fd] }
+    fn read_str(&mut self, _:i32) -> Result<Vec<u8>,StreamEvent> {
+        unsafe {
+            let mut nfo : SigInfo = mem::zeroed();
+            let nfo_ptr = &mut nfo as *mut SigInfo as *mut c_void;
+            let n = read(self.fd, nfo_ptr, 128);
+            if n < 128 {
+                panic!("Wrong read from sigpipe of size {}", n);
+            }
+
+            match nfo.signo {
+                SIGTSTP => Err(StreamEvent::TermStop),
+                SIGINT => Err(StreamEvent::Interrupt),
+                _ => { panic!("Unexpected sigcode = {}", nfo.sigcode) }
+            }
+        }
+    }
+}
+
+impl Drop for SigPipe {
+    fn drop(&mut self) {
+        unsafe { close(self.fd); }
+    }
+}
 
 pub struct EchoPipe <I: Muxable> {
     pub input: I
 }
 
-impl<I:Muxable> AsRawFd for EchoPipe<I> {
-    fn as_raw_fd(&self) -> RawFd { self.input.as_raw_fd() }
-}
-
-impl<I:Muxable> ReadStr for EchoPipe<I> {
-    fn read_str(&mut self) -> Result<Vec<u8>,StreamEvent> {
-        self.input.read_str().map(|s| {
+impl<I:Muxable> Muxable for EchoPipe<I> {
+    fn get_fds(&self) -> Vec<i32> { self.input.get_fds() }
+    fn read_str(&mut self, fd:i32) -> Result<Vec<u8>,StreamEvent> {
+        self.input.read_str(fd).map(|s| {
                                 print!("{}", String::from(std::str::from_utf8(s.as_ref()).unwrap()));
                                 s
                             })
     }
 }
-impl<I: Muxable> Muxable for EchoPipe<I> {}
 
 pub struct StdinReadKey {
     tos: Termios,
-    handle: Stdin
+    handle: Stdin,
+    sig_stream: SigPipe
 }
 
 impl StdinReadKey {
@@ -112,26 +207,29 @@ impl StdinReadKey {
         tos.c_lflag &= !(ECHO | ICANON);
         tcsetattr(handle.as_raw_fd(), TCSAFLUSH, &tos).unwrap();
 
-        StdinReadKey { tos: tos, handle: handle }
+        StdinReadKey { tos: tos, handle: handle,
+                       sig_stream: SigMask::new()
+                                          .add(SIGINT)
+                                          .add(SIGTSTP)
+                                          .open()}
     }
 }
 
-impl AsRawFd for StdinReadKey {
-    fn as_raw_fd(&self) -> RawFd { self.handle.as_raw_fd() }
-}
-
-impl ReadStr for StdinReadKey {
-    fn read_str(&mut self) -> Result<Vec<u8>, StreamEvent> {
-        self.handle.read_str()  
+impl Muxable for StdinReadKey {
+    fn get_fds(&self) -> Vec<i32> { vec![0, self.sig_stream.fd] }
+    fn read_str(&mut self, fd: i32) -> Result<Vec<u8>, StreamEvent> {
+        if fd == 0 {
+            self.handle.read_str(fd)  
+        } else {
+            self.sig_stream.read_str(fd)
+        }
     }
 }
-
-impl Muxable for StdinReadKey {}
 
 impl Drop for StdinReadKey {
     fn drop(&mut self) {
         self.tos.c_lflag |= ECHO | ICANON;
-        tcsetattr(self.as_raw_fd(), TCSAFLUSH, &self.tos).unwrap();
+        tcsetattr(self.handle.as_raw_fd(), TCSAFLUSH, &self.tos).unwrap();
     }
 }
 
@@ -159,12 +257,9 @@ impl Drop for IOPipe {
     }
 }
 
-impl AsRawFd for IOPipe {
-    fn as_raw_fd(&self) -> RawFd { self.fd }
-}
-
-impl ReadStr for IOPipe {
-    fn read_str(&mut self) -> Result<Vec<u8>, StreamEvent> {
+impl Muxable for IOPipe {
+    fn get_fds(&self) -> Vec<i32> { vec![self.fd] }
+    fn read_str(&mut self, _:i32) -> Result<Vec<u8>, StreamEvent> {
         let mut buff: [u8;1024] = [0;1024];
         let n = unsafe { read(self.fd, buff.as_mut_ptr() as *mut c_void, 1024) };
         match n > 0 {
@@ -173,8 +268,6 @@ impl ReadStr for IOPipe {
         }
     }
 }
-
-impl Muxable for IOPipe {}
 
 impl Write for IOPipe {
     fn write(&mut self, buff: &[u8]) -> Result<usize, Error> {
@@ -280,8 +373,8 @@ impl <'a> Destination<'a> {
     }
 }
 
-pub fn read_into<'a>(i: &mut dyn Muxable, o: &mut dyn DoCtrlD) -> Result<(), StreamEvent> {
-    match i.read_str() {
+pub fn read_into<'a>(i: &mut dyn Muxable, fd: i32, o: &mut dyn DoCtrlD) -> Result<(), StreamEvent> {
+    match i.read_str(fd) {
         Ok(s) => match o.write(s.as_ref()).map(|_| o.flush()) {
                     Ok(_) => Ok (()),
                     Err(_) => Err(StreamEvent::Error("Can't write".to_string()))
@@ -302,11 +395,14 @@ impl<'a> Topology<'a> {
     }
 
     pub fn add(mut self, dest: Destination<'a>) -> Self {
-        dest.sources.iter()
-                    .for_each(|s| self.pollstruct.push(pollfd {
-                                                        fd: s.as_raw_fd(),
-                                                        events: POLLIN,
-                                                        revents: 0 }));
+        dest.sources
+            .iter()
+            .for_each(|src| src.get_fds()
+                               .iter()
+                               .for_each(|fd| self.pollstruct.push(pollfd {
+                                                 fd: *fd,
+                                                 events: POLLIN,
+                                                 revents: 0 })));
         self.destinations.push(dest);
         self
     }
@@ -320,19 +416,22 @@ impl<'a> Topology<'a> {
                     for di in 0..self.destinations.len() {
                         let d = &mut self.destinations[di];
                         for si in 0..d.sources.len() {
-                            if self.pollstruct[i].revents & POLLIN > 0 {
-                                match read_into(d.sources[si], d.writer) {
-                                    Err(StreamEvent::Eof) => {
-                                        if !d.writer.ctrl_d() { return; }
-                                    },
-                                    Err(StreamEvent::Error(e)) => panic!("{}", e),
-                                    Ok(()) => {}
+                            for _ in d.sources[si].get_fds() {
+                                if self.pollstruct[i].revents & POLLIN > 0 {
+                                    match read_into(d.sources[si], self.pollstruct[i].fd, d.writer) {
+                                        Err(StreamEvent::Eof) => {
+                                            if !d.writer.ctrl_d() { return; }
+                                        },
+                                        Err(StreamEvent::Error(e)) => panic!("{}", e),
+                                        Err(_) => {},
+                                        Ok(()) => {}
+                                    }
+                                } else if self.pollstruct[i].revents & POLLHUP > 0 {
+                                    return;
                                 }
-                            } else if self.pollstruct[i].revents & POLLHUP > 0 {
-                                return;
-                            }
 
-                            i+=1;
+                                i+=1;
+                            }
                         }
                     }
                 }

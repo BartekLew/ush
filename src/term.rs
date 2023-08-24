@@ -1,7 +1,5 @@
 use std::io::Write;
 use std::collections::HashMap;
-use std::os::unix::prelude::AsRawFd;
-use std::os::unix::prelude::RawFd;
 
 use crate::autocomp::*;
 use crate::hint::*;
@@ -131,13 +129,10 @@ impl <'a, T:Muxable> TermProc<'a,T> {
     }
 }
 
-impl <'a, T:Muxable> AsRawFd for TermProc<'a,T> {
-    fn as_raw_fd(&self) -> RawFd { self.input.as_raw_fd() }
-}
-
-impl <'a, T:Muxable> ReadStr for TermProc<'a,T> {
-    fn read_str(&mut self) -> Result<Vec<u8>, StreamEvent> {
-        match self.input.read_str() {
+impl <'a, T:Muxable> Muxable for TermProc<'a,T> {
+    fn get_fds(&self) -> Vec<Fd> { self.input.get_fds() }
+    fn read_str(&mut self, fd:i32) -> Result<Vec<u8>, StreamEvent> {
+        match self.input.read_str(fd) {
             Ok(s) => { let status = self.tr.accept(s.as_ref());
                        match status.tbc {
                             true => Ok(status.output.unwrap_or(vec![])),
@@ -148,6 +143,4 @@ impl <'a, T:Muxable> ReadStr for TermProc<'a,T> {
         }
     }
 }
-
-impl <'a, T:Muxable> Muxable for TermProc<'a, T> {}
 
