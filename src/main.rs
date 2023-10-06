@@ -1,11 +1,10 @@
 mod hint;
 mod term;
 mod autocomp;
-mod fdmux;
 use crate::term::*;
 use crate::hint::*;
-use crate::fdmux::*;
 use libc::getpid;
+use fdmux::*;
 
 struct Sink {
     std: Option<std::io::Stdout>,

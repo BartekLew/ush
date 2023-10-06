@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::autocomp::*;
 use crate::hint::*;
-use crate::fdmux::*;
+use fdmux::*;
 
 pub struct Reading {
     pub tbc : bool,
