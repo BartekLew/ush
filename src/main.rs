@@ -40,10 +40,11 @@ impl Sink {
 
 fn main() {
     let cmdline: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<&str> = cmdline.iter().map(|c| &c[..]).collect();
     let output = Sink::new(
                 match cmdline.len() > 0 {
                     true => Some(Pty::new().unwrap()
-                                           .spawn_output(cmdline)
+                                           .spawn(args, None)
                                            .unwrap()),
                     false => None
                 });
